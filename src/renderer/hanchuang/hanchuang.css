@@ -410,6 +410,15 @@ textarea { resize: vertical; }
 .hc-form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .hc-section-title { font-weight: 700; margin-top: 16px; }
 .hc-section-title:first-child { margin-top: 0; }
+.hc-update-box {
+  margin-top: 12px; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--hc-border); background: var(--hc-panel-soft, rgba(0,0,0,0.02));
+}
+.hc-update-box.is-update-available { border-color: var(--hc-accent); background: var(--hc-accent-soft); }
+.hc-update-box.is-error { border-color: var(--hc-bad, #b4544b); }
+.hc-update-line { font-size: 13px; line-height: 1.6; }
+.hc-update-bar { margin-top: 8px; height: 6px; border-radius: 4px; background: var(--hc-border); overflow: hidden; }
+.hc-update-bar span { display: block; height: 100%; background: var(--hc-accent); transition: width 0.2s ease; }
 .hc-model-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .hc-model-chips button { font-size: 12px; padding: 3px 10px; }
 .hc-checkbox { display: flex; align-items: center; gap: 8px; }

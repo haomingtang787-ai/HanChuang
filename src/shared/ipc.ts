@@ -105,6 +105,7 @@ export const IpcChannel = {
   appNotify: 'app.notify',
   appDownloadUpdate: 'app.downloadUpdate',
   appOpenUpdate: 'app.openUpdate',
+  appOpenUrl: 'app.openUrl',
   appUpdateProgress: 'app.updateProgress',
   previewFocus: 'preview.focus',
 } as const
@@ -214,6 +215,7 @@ export const IPC_INVOKE_CHANNELS = [
   IpcChannel.appNotify,
   IpcChannel.appDownloadUpdate,
   IpcChannel.appOpenUpdate,
+  IpcChannel.appOpenUrl,
 ] as const
 
 export type IpcInvokeChannel = (typeof IPC_INVOKE_CHANNELS)[number]

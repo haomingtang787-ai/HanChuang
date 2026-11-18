@@ -153,6 +153,7 @@ export function registerIpc(
   bind(IpcChannel.appDownloadUpdate, (event, body) =>
     appInfo.downloadUpdate(body, (channel, payload) => event.sender.send(channel, payload)))
   bind(IpcChannel.appOpenUpdate, (_event, body) => appInfo.openUpdate(body))
+  bind(IpcChannel.appOpenUrl, (_event, body) => appInfo.openUrl(body))
   return [...IPC_INVOKE_CHANNELS]
 }
 

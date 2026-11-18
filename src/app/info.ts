@@ -1,13 +1,23 @@
-import { app, shell } from 'electron'
+import { app, shell, net } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ok, fail, type Result } from '../shared/contract'
 import type { AppInfo, UpdateCheckResult, UpdateDownloadProgress, UpdateDownloadResult, ReleaseAsset } from '../shared/app'
-import { compareVersions, pickSetupAsset } from '../shared/app'
+import { compareVersions, isSafeExternalUrl, pickSetupAsset } from '../shared/app'
 import { IpcChannel } from '../shared/ipc'
 
 type ReleaseAssetItem = ReleaseAsset
+
+/**
+ * 走 Chromium 的网络栈（系统证书 + 系统代理），而不是 Node 自带的 fetch：
+ * Node 只信它内置的 CA，公司/杀软装了根证书时会报 unable to verify the first certificate。
+ * 测试环境里 electron 模块被 mock 掉、没有 net，就回落到全局 fetch。
+ */
+function httpFetch(): typeof fetch {
+  const chromium = (net as unknown as { fetch?: typeof fetch } | undefined)?.fetch
+  return chromium ? chromium.bind(net) : fetch
+}
 
 /**
  * 应用信息 + 更新检查/下载。
@@ -23,16 +33,17 @@ type ReleaseAssetItem = ReleaseAsset
  */
 export class AppInfoService {
   info(): Result<AppInfo> {
-    return ok(randomUUID(), { version: app.getVersion(), name: '灯下' })
+    return ok(randomUUID(), { version: app.getVersion(), name: '寒窗' })
   }
 
   async checkUpdate(): Promise<Result<UpdateCheckResult>> {
     const current = app.getVersion()
-    const repo = (process.env.DENGXIA_UPDATE_REPO ?? 'haomingtang787-ai/dengxia').trim()
+    const repo = (process.env.HANCHUANG_UPDATE_REPO ?? 'haomingtang787-ai/HanChuang').trim()
 
     try {
-      const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-        headers: { 'user-agent': 'dengxia-app', accept: 'application/vnd.github+json' },
+      // 走 GitHub REST API（api.github.com），不抓网页；未登录 60 次/小时，够用
+      const response = await httpFetch()(`https://api.github.com/repos/${repo}/releases/latest`, {
+        headers: { 'user-agent': 'hanchuang-app', accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(20_000),
       })
       if (!response.ok) {
@@ -102,9 +113,9 @@ export class AppInfoService {
       const destination = path.join(dir, input.assetName)
       await fs.promises.rm(destination, { force: true })
 
-      const response = await fetch(input.assetUrl, {
+      const response = await httpFetch()(input.assetUrl, {
         headers: {
-          'user-agent': 'dengxia-app',
+          'user-agent': 'hanchuang-app',
           accept: 'application/octet-stream',
         },
         signal: AbortSignal.timeout(600_000),
@@ -155,6 +166,21 @@ export class AppInfoService {
     }
   }
 
+  /** 用系统浏览器打开 release 页面；只放行自己仓库的 GitHub 链接。 */
+  async openUrl(body: unknown): Promise<Result<{ opened: boolean }>> {
+    const requestId = randomUUID()
+    try {
+      const url = typeof body === 'object' && body && typeof (body as { url?: unknown }).url === 'string'
+        ? (body as { url: string }).url
+        : ''
+      if (!isSafeExternalUrl(url)) return fail(requestId, 'INVALID_ARGUMENT', '这个链接不可信，已拦下。')
+      await shell.openExternal(url)
+      return ok(requestId, { opened: true })
+    } catch (error) {
+      return fail(requestId, 'NETWORK_ERROR', error instanceof Error ? error.message : '打开链接失败。')
+    }
+  }
+
   /** 只允许打开 updates 目录下的 exe，避免被别的路径带偏。 */
   async openUpdate(body: unknown): Promise<Result<{ opened: boolean }>> {
     const requestId = randomUUID()
@@ -189,7 +215,7 @@ function parseDownloadBody(body: unknown): { assetUrl: string; assetName: string
   if (!isAllowedAssetUrl(assetUrl)) {
     throw new Error('下载地址不是 GitHub release。')
   }
-  if (!/^DengXia-setup-.*\.exe$/i.test(assetName)) throw new Error('安装包名字不对。')
+  if (!/^HanChuang-setup-.*\.exe$/i.test(assetName)) throw new Error('安装包名字不对。')
   const assetSize = typeof raw.assetSize === 'number' && Number.isFinite(raw.assetSize) ? raw.assetSize : null
   return { assetUrl, assetName, assetSize }
 }

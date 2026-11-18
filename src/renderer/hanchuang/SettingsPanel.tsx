@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AiConfigView } from '../../shared/ai'
+import type { UpdateCheckResult, UpdateDownloadProgress } from '../../shared/app'
 import type { Result, StorageUsage } from '../../shared/contract'
 import type { AppSettingsView } from '../../shared/data'
 import type { HabitsView } from '../../shared/teaching'
@@ -12,7 +13,7 @@ type Props = {
   onTeacherSaved: () => void
 }
 
-type Tab = 'model' | 'teacher' | 'habits' | 'data'
+type Tab = 'model' | 'teacher' | 'habits' | 'data' | 'about'
 
 const KIND_LABEL: Record<TeacherMemoryKind, string> = {
   goal: '目标',
@@ -42,6 +43,11 @@ export function SettingsPanel(props: Props) {
   const [settings, setSettings] = useState<AppSettingsView | null>(null)
   const [storage, setStorage] = useState<StorageUsage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<UpdateCheckResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [download, setDownload] = useState<UpdateDownloadProgress | null>(null)
+  const [installedPath, setInstalledPath] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -83,6 +89,19 @@ export function SettingsPanel(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (!api) return
+    void api.app.info().then((result) => {
+      if (result.ok) setVersion(result.data.version)
+    })
+  }, [api])
+
+  useEffect(() => {
+    if (!api) return
+    const off = api.app.onUpdateProgress((progress) => setDownload(progress))
+    return () => { off() }
+  }, [api])
+
   async function run(action: () => Promise<void>): Promise<void> {
     setBusy(true)
     try {
@@ -108,6 +127,7 @@ export function SettingsPanel(props: Props) {
           <button className={tab === 'teacher' ? 'active' : ''} onClick={() => setTab('teacher')}>老师</button>
           <button className={tab === 'habits' ? 'active' : ''} onClick={() => setTab('habits')}>我的习惯</button>
           <button className={tab === 'data' ? 'active' : ''} onClick={() => setTab('data')}>预算与数据</button>
+          <button className={tab === 'about' ? 'active' : ''} onClick={() => setTab('about')}>关于与更新</button>
         </div>
 
         <div className="hc-modal-body">
@@ -366,6 +386,79 @@ export function SettingsPanel(props: Props) {
                   props.notify('good', '恢复完成，正在重启寒窗…')
                 })}>从文件夹恢复…</button>
               </div>
+            </div>
+          )}
+
+          {tab === 'about' && (
+            <div className="hc-form">
+              <div className="hc-section-title">寒窗 {version ? `v${version}` : ''}</div>
+              <div className="hc-form-note">
+                本地 AI 授课老师。课件、对话、API Key 都只在你本机；检查更新只读 GitHub 的 release 信息（api.github.com 的接口，不抓网页、不登录、不上传任何数据）。
+              </div>
+              <div className="hc-form-actions">
+                <button
+                  className="hc-primary"
+                  disabled={busy || checking}
+                  onClick={() => void (async () => {
+                    setChecking(true)
+                    setInstalledPath('')
+                    setDownload(null)
+                    try {
+                      setUpdate(unwrap(await api.app.checkUpdate()))
+                    } catch (error) {
+                      props.notify('bad', error instanceof Error ? error.message : '检查更新失败')
+                    } finally {
+                      setChecking(false)
+                    }
+                  })()}
+                >{checking ? '检查中…' : '检查更新'}</button>
+                {update?.url && (
+                  <button disabled={busy} onClick={() => void run(async () => {
+                    unwrap(await api.app.openUrl({ url: update.url as string }))
+                  })}>打开发布页</button>
+                )}
+              </div>
+              {update && (
+                <div className={`hc-update-box is-${update.status}`}>
+                  <div className="hc-update-line">{update.message}</div>
+                  {update.status === 'update-available' && update.assetUrl && update.assetName && !installedPath && (
+                    <>
+                      <div className="hc-form-note">
+                        安装包 {update.assetName}
+                        {update.assetSize ? `，约 ${(update.assetSize / 1024 / 1024).toFixed(0)} MB` : ''}
+                        。运行安装包即可覆盖安装，课程、对话、错题都不动。
+                      </div>
+                      <div className="hc-form-actions">
+                        <button disabled={busy || Boolean(download && download.percent < 100)} onClick={() => void run(async () => {
+                          const assetUrl = update.assetUrl as string
+                          const assetName = update.assetName as string
+                          setDownload({ received: 0, total: update.assetSize ?? 0, percent: 0 })
+                          const result = unwrap(await api.app.downloadUpdate({ assetUrl, assetName, assetSize: update.assetSize }))
+                          setInstalledPath(result.filePath)
+                          props.notify('good', `安装包已下载：${result.filePath}`)
+                        })}>{download && download.percent < 100 ? `下载中 ${download.percent}%` : '下载安装包'}</button>
+                      </div>
+                      {download && download.percent < 100 && (
+                        <div className="hc-update-bar"><span style={{ width: `${Math.max(2, download.percent)}%` }} /></div>
+                      )}
+                    </>
+                  )}
+                  {installedPath && (
+                    <>
+                      <div className="hc-form-note">已下载到 {installedPath}。点「运行安装包」会自动关掉寒窗再安装，装完重新打开就是新版。</div>
+                      <div className="hc-form-actions">
+                        <button className="hc-primary" disabled={busy} onClick={() => void run(async () => {
+                          unwrap(await api.app.openUpdate({ filePath: installedPath }))
+                          props.notify('info', '安装程序已启动，装完再打开寒窗就是新版')
+                        })}>运行安装包</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {!update && version && (
+                <div className="hc-form-note">当前已是最新检查点：还没点过「检查更新」。点一下会去向 GitHub 问一次最新版本，正常情况一两秒。</div>
+              )}
             </div>
           )}
         </div>

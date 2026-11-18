@@ -5,22 +5,65 @@ import path from 'node:path'
 
 const state = vi.hoisted(() => ({ root: '' }))
 const openPath = vi.hoisted(() => vi.fn(async () => ''))
+const openExternal = vi.hoisted(() => vi.fn(async () => undefined))
 
 vi.mock('electron', () => ({
   app: { getVersion: () => '0.5.6', getPath: () => state.root },
-  shell: { openPath },
+  shell: { openPath, openExternal },
+  // 测试环境没有 Chromium 网络栈，走 global fetch（被 vi.stubGlobal 换成假实现）
+  net: undefined,
 }))
 
 import { AppInfoService } from '../src/app/info'
 
-const assetUrl = 'https://github.com/haomingtang787-ai/dengxia/releases/download/v0.5.6/DengXia-setup-0.5.6.exe'
-const apiAssetUrl = 'https://api.github.com/repos/haomingtang787-ai/dengxia/releases/assets/123456'
-const assetName = 'DengXia-setup-0.5.6.exe'
+const assetUrl = 'https://github.com/haomingtang787-ai/HanChuang/releases/download/v0.5.6/HanChuang-setup-0.5.6.exe'
+const apiAssetUrl = 'https://api.github.com/repos/haomingtang787-ai/HanChuang/releases/assets/123456'
+const assetName = 'HanChuang-setup-0.5.6.exe'
 const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
 
 describe('应用内更新下载', () => {
+  it('检查更新只打 api.github.com 的最新 release 接口', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
+      tag_name: 'v9.9.9',
+      html_url: 'https://github.com/haomingtang787-ai/HanChuang/releases/tag/v9.9.9',
+      assets: [{
+        name: 'HanChuang-setup-9.9.9.exe',
+        size: 170_000_000,
+        url: 'https://api.github.com/repos/haomingtang787-ai/HanChuang/releases/assets/999',
+      }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await new AppInfoService().checkUpdate()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.status).toBe('update-available')
+    expect(result.data.latest).toBe('9.9.9')
+    expect(result.data.assetName).toBe('HanChuang-setup-9.9.9.exe')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.github.com/repos/haomingtang787-ai/HanChuang/releases/latest')
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ 'user-agent': 'hanchuang-app', accept: 'application/vnd.github+json' }),
+    }))
+  })
+
+  it('GitHub 返回非 200 时给出可读错误，不抛异常', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"rate limit"}', { status: 403 })))
+    const result = await new AppInfoService().checkUpdate()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.status).toBe('error')
+    expect(result.data.message).toContain('403')
+  })
+
+  it('只放行自己仓库的 release 链接', async () => {
+    const service = new AppInfoService()
+    await expect(service.openUrl({ url: 'https://github.com/haomingtang787-ai/HanChuang/releases/tag/v1.4.2' }))
+      .resolves.toMatchObject({ ok: true, data: { opened: true } })
+    await expect(service.openUrl({ url: 'https://evil.example.com/x' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_ARGUMENT' } })
+  })
+
   beforeEach(() => {
-    state.root = fs.mkdtempSync(path.join(os.tmpdir(), 'dengxia-update-'))
+    state.root = fs.mkdtempSync(path.join(os.tmpdir(), 'hanchuang-update-'))
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -67,7 +110,7 @@ describe('应用内更新下载', () => {
   it('拒绝非 GitHub release 地址与错误大小，并删掉半截文件', async () => {
     const service = new AppInfoService()
     const rejected = await service.downloadUpdate(
-      { assetUrl: 'https://example.com/DengXia-setup-0.5.6.exe', assetName, assetSize: null },
+      { assetUrl: 'https://example.com/HanChuang-setup-0.5.6.exe', assetName, assetSize: null },
       () => undefined,
     )
     expect(rejected.ok).toBe(false)
@@ -92,3 +135,4 @@ describe('应用内更新下载', () => {
     await expect(service.openUpdate({ filePath: outside })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_ARGUMENT' } })
   })
 })
+

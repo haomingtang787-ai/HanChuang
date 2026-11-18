@@ -29,13 +29,15 @@ export type ReleaseAsset = {
   browser_download_url?: unknown
 }
 
-/** 只认 `DengXia-setup-x.y.z.exe`，避免把 blockmap 或别的文件当安装包。 */
+/** 只认 `HanChuang-setup-x.y.z.exe`，避免把 blockmap / 便携版当安装包。 */
+export const SETUP_ASSET_PATTERN = /^HanChuang-setup-.*\.exe$/i
+
 export function pickSetupAsset(
   assets: ReleaseAsset[] | undefined,
 ): Pick<UpdateCheckResult, 'assetUrl' | 'assetName' | 'assetSize'> {
   const found = (assets ?? []).find((asset) => {
     const name = typeof asset.name === 'string' ? asset.name : ''
-    return /^DengXia-setup-.*\.exe$/i.test(name)
+    return SETUP_ASSET_PATTERN.test(name)
       && (typeof asset.url === 'string' || typeof asset.browser_download_url === 'string')
   })
   if (!found || typeof found.name !== 'string') {
@@ -49,6 +51,23 @@ export function pickSetupAsset(
     assetUrl,
     assetName: found.name,
     assetSize: typeof found.size === 'number' && Number.isFinite(found.size) ? found.size : null,
+  }
+}
+
+/** 只允许用系统浏览器打开自己仓库的页面：https、无账号密码、域名在白名单里。 */
+export function isSafeExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password) return false
+    if (url.hostname === 'github.com') {
+      return /^\/[^/]+\/[^/]+\/releases(\/|$)/.test(url.pathname)
+    }
+    if (url.hostname === 'api.github.com') {
+      return /^\/repos\/[^/]+\/[^/]+\/releases(\/|$)/.test(url.pathname)
+    }
+    return false
+  } catch {
+    return false
   }
 }
 

@@ -244,6 +244,8 @@ const desk = {
       invoke<import('../shared/app').UpdateDownloadResult>(IpcChannel.appDownloadUpdate, body),
     openUpdate: (body: { filePath: string }) =>
       invoke<{ opened: boolean }>(IpcChannel.appOpenUpdate, body),
+    openUrl: (body: { url: string }) =>
+      invoke<{ opened: boolean }>(IpcChannel.appOpenUrl, body),
     onUpdateProgress: (callback: (progress: import('../shared/app').UpdateDownloadProgress) => void) => {
       const listener = (_event: IpcRendererEvent, payload: import('../shared/app').UpdateDownloadProgress) => callback(payload)
       ipcRenderer.on(IpcChannel.appUpdateProgress, listener)
