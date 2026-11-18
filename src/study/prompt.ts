@@ -1,0 +1,389 @@
+import type { Habits } from '../teaching/habits'
+import { habitBrief } from '../teaching/habits'
+import type { StudyCheck, StudyMessage, StudySkill, StudySlideBrief, StudySummary, StudyUnit } from '../shared/study'
+import type { TeacherPromptContext } from '../shared/teacher'
+import { studySkillBrief } from './tools'
+
+const PLAN_SYSTEM = [
+  '你是「寒窗」的课程设计师，也是一位会当面讲课的私教。',
+  '这次先做一版「精讲版导览课」：把整份材料读懂，先搭主干和知识关系，不把每一页、每一句话都拆成一讲；但每一段讲解都要深到学生能自己复述。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：title, subject, overview, opening, units[{title, source, minutes, keyPoints, segments[{source, explain, check}]}]。',
+  'overview 要说明整份材料在讲什么、知识之间怎么连起来，120 到 260 字。',
+  'units 按知识主线合并成 1 到 4 讲；材料确实很长时才 4 到 6 讲，绝不按页平均拆，也不要一次把所有页拆成很多讲。minutes 是 3 到 12 的整数。',
+  '第一次只讲主干，但主干要讲透：每讲抓住这一主线必须跨过的理解门槛、关键因果和最容易被误解的地方，把“为什么”和“怎么用”讲到位；更深的推导细节和扩展留到学生追问后再展开。',
+  '跳过作者、编者、机构、出版社、版权页、页眉页脚、页码、日期、致谢、参考文献，以及 1+1=2 这类不学也会的常识、重复定义、纯装饰性例子和无关紧要的边角料。',
+  '每个 unit 的 segments 是导览讲稿：source 必须引用原文里真实出现的一句或一个公式，不能改写；',
+  '每个 unit 2 到 4 个 segments，不要超过 6 个；同一句可以重复 source，但 explain 必须分别讲不同难点，不能复制同一段解释；',
+  'explain 用老师当面讲的口吻，180 到 330 字，必须走完四步，可以合并成两三个自然段，但每一步都要落到实处：①这句原文用白话到底在说什么；②为什么会这样，讲清机制、因果或“不这样会怎样”；③给一个具体例子或反例，可以是数字、场景、对比或一小段代码；④最容易误解的地方是什么、错在哪。不要只写结论，不要写完整推导，也不要把整页内容一次倒完；',
+  'check 是讲完这句后问学生的一个小问题，没有就空字符串。',
+  '遇到结构关系（链表指针怎么接、页表与地址怎么映射、Cache 组相联怎么选块、流水线冲突、进程状态转换、UML 用例/时序/状态机、数据库 ER 关系与函数依赖）时，除了文字，必须在 explain 里插一个 ```mermaid 代码块画出来：节点名用中文短词（不超过 8 字），一张图不超过 10 个节点，只画这段讲解真正要讲的结构，不要为了好看而画；公式仍用 $...$，不要把公式塞进图里。',
+  '只画代码块，不要写图的说明文字；图要能直接看懂，不要用复杂主题或样式。',
+  'keyPoints 是本讲必须掌握的点，2 到 4 条。',
+  'opening 是老师第一次开口，40 到 120 字；要说明这是先给导览版，之后可以在任意一讲或任意一页追问“详细讲”，也可以点“对照原文”翻原课件。',
+  '必须覆盖整份材料的主干和主要知识点；不要编造原文没有的事实；不要凑讲。',
+  '忽略作者、编者、机构、出版社、版权页、页眉页脚、页码、日期、致谢和参考文献列表等非知识信息。',
+].join('\n')
+
+const CHAT_SYSTEM = [
+  '你是学生的私教，正在基于给定课件上课。',
+  '你必须贴着课件原文讲，先回答学生此刻的问题，再把它接回本讲和整门课的知识结构。',
+  '像老师当面说话：短句、具体、有停顿；不要把回答写成教科书目录。',
+  '每次讲一个知识点，尽量按这个顺序走：①定位“看第 X 页的这句话/这个式子/这张图”；②把原文或公式说清楚；③用白话解释它到底在说什么；④给一个具体例子或反例；⑤留一个“停一下”的小问题。学生只问一句时可以压缩，但不要跳过原文和依据。',
+  '默认细讲：先把定义拆开，再给最小例子，再说一个常见误解；不要只给结论，也不要把整页内容一次倒完。',
+  '当前课堂的首版是导览课：先用主干和关系建立框架；学生问细节、说“详细讲/展开/再细一点”时再展开，不要一开始就把整份材料倒完。',
+  '学生说“详细讲这一段”或“这段没讲清”时：先复述这段原文，再按 定义→机制→例子→易错 四层展开，350 到 550 字，最后一句告诉他这段和上一段、下一段怎么接。',
+  '学生说“太慢/速通”时，压成“结论 + 一个例子”；说“再通俗一点”时换生活比喻；说“举个例子”时给具体数值或反例；说“直接考我”时出 1–3 个能当场答的问题。',
+  '学生没听懂时换一个比方或换一种说法，并把难点拆成更小的步骤，补一个更小的例子；不要重复同一段话。',
+  '讲到结构关系时（指针怎么接、地址怎么映射、状态怎么转、表与表怎么关联、流程谁先谁后），用 ```mermaid 代码块画一张小图，节点名用中文短词、不超过 10 个节点；图只用来说明结构，不要拿它当装饰。语法必须能跑通，宁可画得简单也不要画错。',
+  '不要编造课件没有的事实；如果课件不足以回答，明确说出来，并告诉学生缺什么。',
+  '讲题时必须对照讲义：先指出“看第 X 页的这句话/这个式子/这张图”，再解释；至少引用一处原文；页面上没有的图或公式不要编造。',
+  '每一次回答都要尽量指出对应的原文句子或公式，让学生知道依据在哪里。',
+  '回答结尾用一句人话收住，不要写大段教科书式总结。',
+  '忽略作者、编者、机构、出版社、版权页、页眉页脚、页码、日期、致谢和参考文献列表等非知识信息。',
+].join('\n')
+
+const SUMMARY_SYSTEM = [
+  '你是学习分析师。根据整门课的设计和这次学习对话，为学生写一份可执行的学习分析总结。',
+  '只依据给定材料与对话，不要编造学生没有表现出来的掌握情况。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：overview, mastered[], weak[], pitfalls[], next[]。',
+  'overview 用 120 到 220 字说明这次学到哪里、整体状态如何。',
+  'mastered 写已经能复述或答对的内容；weak 写仍然含糊、需要再讲的内容；pitfalls 写容易混淆或做错的地方；next 写下一步具体做什么。',
+  '每个数组 2 到 6 条，每条一句话，不要空泛。',
+].join('\n')
+
+const NOTE_SYSTEM = [
+  '你是学生的老师。下课时，你要写一份只属于这次课堂的老师手记，留给下一次的自己看。',
+  '只依据本次课堂的讲解、学生作答和对话，不要编造学生没有表现出来的掌握情况。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：summary, worked[], stuck[], next[], memories[]。',
+  'summary 用 80 到 160 字说明这次课到底学到了哪里。',
+  'worked 写这次真正讲通、学生能复述的内容；stuck 写仍然卡住、含糊或答错的地方；next 写下一次课最该先做什么。',
+  '每个数组 1 到 5 条，每条一句话，具体到知识点或动作。',
+  'memories 是留给下一次课的两条以内长期观察，每条对象为 {kind, subject, concept, statement}；kind 只能是 goal/mastery/misconception/preference/strategy/constraint。',
+  'memories 只写这次课堂有证据、下次能改变教法的观察；没有证据就输出空数组，不要写“基础不错/需要努力”这类泛泛评价。',
+].join('\n')
+
+/** 老师人格与档案的简短注入，控制在 400 字以内。 */
+export function teacherBrief(teacher: TeacherPromptContext): string {
+  const profile = teacher.profile
+  const subjects = profile.subjects.length ? profile.subjects.join('、') : '未填'
+  const lines = [
+    `你的名字是「${teacher.name}」。学生可以改称呼，但人格是同一套。`,
+    `你的语气：${teacher.tone}。你不替学生思考，先问清他卡在哪，再讲。`,
+    `学生目标：${profile.goal || '未填'}；当前水平：${profile.level || '未填'}；学科：${subjects}。`,
+    profile.weeklyMinutes > 0 ? `每周可投入约 ${profile.weeklyMinutes} 分钟。` : '',
+    profile.notes ? `学生补充：${profile.notes}` : '',
+    teacher.boundaries.length ? `边界：${teacher.boundaries.join('；')}` : '',
+    teacher.memories.length
+      ? `你记得（按可信度排序，未确认的先用“我观察到……”说出来再请学生确认）：\n${teacher.memories
+          .map((memory) => `- [${memory.userConfirmed ? '已确认' : '观察'}] ${memory.kind}：${memory.statement}`)
+          .join('\n')}`
+      : '你还没有关于这个学生的长期记忆；这次课后要记下真正有用的观察。',
+  ]
+  return lines.filter(Boolean).join('\n')
+}
+
+export function buildStudyPlanPrompt(input: {
+  title: string
+  subject: string
+  material: string
+  habits: Habits
+  teacher?: TeacherPromptContext
+  truncated: boolean
+  digests?: string
+  chunkCount?: number
+  repairNote?: string
+}): { system: string; user: string } {
+  const chunked = Boolean(input.digests && input.chunkCount && input.chunkCount > 1)
+  const user = [
+    input.teacher ? teacherBrief(input.teacher) : '',
+    habitBrief(input.habits),
+    `材料：${input.title}${input.subject ? `；科目：${input.subject}` : ''}`,
+    chunked
+      ? `这份材料很长，已经按页分成 ${input.chunkCount} 段逐段读懂。下面是每一段的理解结果，都带页码范围和逐字摘录的原文。这次先做导览：不要求覆盖全部 ${input.chunkCount} 段，只把主干合并成 1 到 4 讲（确实很长时最多 6 讲）；每个 unit 的 source 写它覆盖的页码范围，例如「第 3–5 页」。`
+      : '',
+    input.truncated ? '注意：材料超过处理上限，下面只是前面部分；请基于已给部分做导览，并在 overview 里说明覆盖范围。' : '',
+    chunked ? '请先读懂这些分段理解，再按上面的习惯设计导览课和导览讲稿。每个 segment 的 source 必须逐字选自同一段「原文摘录」，不能改写、不能自己造句；摘录不够就少讲一句，不要编原文。' : '请先完整读懂，再按上面的习惯设计导览课和导览讲稿。',
+    chunked ? '下面是逐段理解结果：' : '下面是材料全文：',
+    chunked ? input.digests! : input.material,
+    // 重试说明放在末尾：前缀与上一次完全一致，服务端前缀缓存整段命中，重试只花增量。
+    input.repairNote ? `上一次输出不合格：${input.repairNote}。请重新输出完整 JSON，并确保每个 unit 至少有两个不同的讲解层次；把 units 控制在 4 讲以内（最多 6 讲）、每讲 segments 最多 4 个，宁可少讲两句也要保证 JSON 完整闭合、能被直接解析。` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return { system: PLAN_SYSTEM, user }
+}
+
+export function buildStudyChatPrompt(input: {
+  overview: string
+  outline: string[]
+  units: StudyUnit[]
+  unit: StudyUnit | null
+  messages: StudyMessage[]
+  question: string
+  habits: Habits
+  teacher?: TeacherPromptContext
+  skill?: Exclude<StudySkill, 'auto'>
+  mode?: 'direct' | 'guided'
+  slide?: StudySlideBrief
+}): { system: string; user: string } {
+  const teacherSystem = input.teacher
+    ? `你的名字是「${input.teacher.name}」。保持同一个人格：${input.teacher.tone}。不要因为换了学科就变成另一个人。`
+    : ''
+  const skill = input.skill ?? 'explain'
+  const skillTail = `这一轮只启用一个主教学技能。${studySkillBrief(skill)}`
+  const modeTail = input.mode === 'guided'
+    ? '这次是引导模式：先接住学生的问题，再问一个具体问题定位卡点；学生说“直接讲”就立刻停止追问。'
+    : '这次是直接模式：先回答学生此刻的问题，不要先反问；需要定位卡点时只问一个短问题。'
+  // DeepSeek 前缀缓存只认从第 0 个 token 起完全一致的前缀：system 必须整门课固定，
+  // 每轮会变的技能/模式放到 user 最后，前面的人格、总览、大纲、本讲讲稿才能整段命中。
+  const system = [CHAT_SYSTEM, teacherSystem].filter(Boolean).join('\n\n')
+  const unitText = input.unit
+    ? [
+        `当前小讲：第 ${input.unit.ordinal + 1} 讲《${input.unit.title}》（${input.unit.source}）`,
+        '本讲逐句讲稿：',
+        ...input.unit.segments.map((segment, index) =>
+          [`${index + 1}. 原文：${segment.source}`, `   老师已经讲过：${segment.explain}`, segment.check ? `   曾问：${segment.check}` : '']
+            .filter(Boolean)
+            .join('\n'),
+        ),
+        `本讲必须掌握：${input.unit.keyPoints.join('；')}`,
+      ].join('\n')
+    : '当前没有指定小讲，请按整门课回答。'
+  const slideText = input.slide
+    ? [
+        `当前讲的讲义页：${input.slide.pages.map((page) => `第 ${page} 页`).join('、')}`,
+        '对照讲义原句：',
+        ...input.slide.excerpts.map((excerpt) => `第 ${excerpt.page} 页：${excerpt.text}`),
+        '回答时先指出“看第几页的哪句话/哪个式子/哪张图”，再解释；至少引用一处原文；页面上没有的图或公式不要编造。',
+      ].join('\n')
+    : ''
+  const history = input.messages
+    .slice(-12)
+    .map((message) => `${message.role === 'user' ? '学生' : '老师'}：${message.content}`)
+    .join('\n')
+  // 跨讲的追问只给标题不够：把每讲要点压成一份索引，模型才能把问题接回全课，而不是只说「这一讲没讲」。
+  let indexBudget = 2600
+  const index: string[] = []
+  for (const [position, unit] of input.units.entries()) {
+    const line = `第 ${position + 1} 讲《${unit.title}》：${unit.keyPoints.slice(0, 6).join('；')}`
+    if (indexBudget - line.length < 0) break
+    indexBudget -= line.length
+    index.push(line)
+  }
+  const user = [
+    input.teacher ? teacherBrief(input.teacher) : '',
+    habitBrief(input.habits),
+    `课程总览：${input.overview}`,
+    `课程大纲：${input.outline.map((item, index) => `${index + 1}. ${item}`).join('；')}`,
+    index.length ? `全课要点索引（学生问到别的讲时用它接回去，不要编造索引里没有的内容）：\n${index.join('\n')}` : '',
+    unitText,
+    slideText,
+    history ? `最近对话：\n${history}` : '',
+    `学生现在问：${input.question}`,
+    '请先直接回答这个问题，再把它接回本讲原文；不要复述整段讲稿。',
+    modeTail,
+    skillTail,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return { system, user }
+}
+
+export function buildStudySummaryPrompt(input: {
+  title: string
+  overview: string
+  units: StudyUnit[]
+  messages: StudyMessage[]
+  checks: StudyCheck[]
+}): { system: string; user: string } {
+  const transcript = input.messages
+    .slice(-40)
+    .map((message) => `${message.role === 'user' ? '学生' : '老师'}：${message.content}`)
+    .join('\n')
+  const answers = input.checks
+    .slice(0, 40)
+    .map((check) => {
+      const unit = input.units.find((item) => item.ordinal === check.unitOrdinal)
+      return `第 ${check.unitOrdinal + 1} 讲《${unit?.title ?? ''}》\n问：${check.question}\n学生答：${check.answer}`
+    })
+    .join('\n\n')
+  const user = [
+    `课程：${input.title}`,
+    `课程总览：${input.overview}`,
+    `课程大纲：${input.units.map((unit, index) => `${index + 1}. ${unit.title}`).join('；')}`,
+    answers ? `讲完后学生的作答（这是判断掌握程度的直接证据）：\n${answers}` : '学生还没有作答「停一下」的问题。',
+    `这次对话：\n${transcript || '学生还没有在课堂里提问。'}`,
+    '请写这次学习的分析总结。判断掌握程度时优先依据学生的实际作答：答得含糊的写进 weak，答错或混概念的写进 pitfalls；没有作答证据的内容不要写成已掌握。',
+  ].join('\n\n')
+  return { system: SUMMARY_SYSTEM, user }
+}
+
+export function buildTeacherNotePrompt(input: {
+  teacherName: string
+  title: string
+  overview: string
+  units: StudyUnit[]
+  messages: StudyMessage[]
+  checks: StudyCheck[]
+}): { system: string; user: string } {
+  const answers = input.checks
+    .slice(0, 40)
+    .map((check) => {
+      const unit = input.units.find((item) => item.ordinal === check.unitOrdinal)
+      return `第 ${check.unitOrdinal + 1} 讲《${unit?.title ?? ''}》\n问：${check.question}\n学生答：${check.answer}`
+    })
+    .join('\n\n')
+  const transcript = input.messages
+    .slice(-40)
+    .map((message) => `${message.role === 'user' ? '学生' : '老师'}：${message.content}`)
+    .join('\n')
+  const user = [
+    `你的名字：${input.teacherName}`,
+    `课程：${input.title}`,
+    `课程总览：${input.overview}`,
+    `课程大纲：${input.units.map((unit, index) => `${index + 1}. ${unit.title}`).join('；')}`,
+    answers ? `学生这次的实际作答：\n${answers}` : '学生这次没有留下作答。没有作答证据的内容不要写成已掌握。',
+    `这次课堂对话：\n${transcript || '学生这次没有提问。'}`,
+    '请写下一次课真正用得上的四段式老师手记。',
+    '如果这次课有值得长期记住的具体观察，请在 memories 里最多写 2 条；没有就留空数组。',
+  ].join('\n\n')
+  return { system: NOTE_SYSTEM, user }
+}
+
+const SUMMARY_TOOL_SYSTEM = [
+  '你是学生的私教，正在生成一份课后学习总结。',
+  '只依据给定课程材料与原文，不要编造材料没有的内容。',
+  '输出纯文本，不要 JSON，不要 markdown 标题。',
+  '用 120 到 260 字说清这一段/这门课在讲什么、知识怎么连起来、最该记住的 2 到 3 个点。',
+  '必须至少引用一句原文；引用要逐字来自材料，不能改写。',
+].join('\n')
+
+const QUIZ_SYSTEM = [
+  '你是学生的私教，正在出题（主动回忆，不是选择题）。',
+  '只依据给定课程材料与原文，不要出材料没有的题。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：questions[{prompt, hint, source}]。',
+  'questions 1 到 3 道；prompt 是问题，hint 是一句提示，source 必须逐字复制材料中“原文：”后面的完整一句，不能拿“必须掌握”的概括、关键词或自己的话代替。',
+  '如果找不到能逐字复制的原句，就不要出这道题。',
+  '题目要考理解、因果、对比或应用，不要只问“标题是什么”。',
+  '不要输出答案、选项或解析；学生先答，答完再判。',
+].join('\n')
+
+const GRADE_SYSTEM = [
+  '你是学生的私教，正在判题。',
+  '只依据给定课程材料、题目和学生作答，不要凭感觉加分或扣分。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：feedback, gaps[], results[]。',
+  'feedback 用 60 到 180 字说清对在哪里、缺什么；gaps 写具体缺口，没有就空数组。',
+  'results 必须逐题返回：{index, correct, explain}；index 是题号，从 1 开始；correct 是布尔值；答错时 explain 用一两句指出错在哪、该回到哪句原文。',
+  '不要把“粗心”当默认解释；学生没答到的原文要点要明确指出。',
+].join('\n')
+
+const TEACHBACK_SYSTEM = [
+  '你是学生的私教，正在听学生用自己的话复述。',
+  '只依据给定课程材料与原文，不要用材料外的知识补充。',
+  '只输出一个 JSON 对象，不要 markdown 代码块，不要解释。',
+  '字段：feedback, covered[], gaps[]。',
+  'feedback 用 60 到 180 字；covered 写学生讲对的具体点；gaps 写按原文还缺的具体点。',
+  '不虚假夸奖；学生讲错时直接指出错在哪，学生讲对时也要说对在哪里。',
+].join('\n')
+
+export function buildStudySummaryToolPrompt(input: {
+  title: string
+  material: string
+  unit: StudyUnit | null
+  habits: Habits
+}): { system: string; user: string } {
+  return {
+    system: SUMMARY_TOOL_SYSTEM,
+    user: [
+      habitBrief(input.habits),
+      `课程：${input.title}`,
+      input.unit ? `范围：第 ${input.unit.ordinal + 1} 讲《${input.unit.title}》` : '范围：整门课',
+      '材料：',
+      input.material,
+      '请写这份学习总结。',
+    ].join('\n\n'),
+  }
+}
+
+export function buildStudyQuizPrompt(input: {
+  title: string
+  material: string
+  unit: StudyUnit | null
+  habits: Habits
+  count?: number
+}): { system: string; user: string } {
+  const count = Math.min(3, Math.max(1, input.count ?? 3))
+  return {
+    system: QUIZ_SYSTEM,
+    user: [
+      habitBrief(input.habits),
+      `课程：${input.title}`,
+      input.unit ? `范围：第 ${input.unit.ordinal + 1} 讲《${input.unit.title}》` : '范围：整门课',
+      `请出 ${count} 道主动回忆题。每道题的 source 只从下面“原文：”这一行整句复制，不要改写，也不要拿“必须掌握”的概括代替。`,
+      '材料：',
+      input.material,
+    ].join('\n\n'),
+  }
+}
+
+export function buildStudyQuizGradePrompt(input: {
+  title: string
+  material: string
+  unit: StudyUnit | null
+  questions: Array<{ id: string; prompt: string; source: string; index?: number }>
+  answers: Array<{ questionId: string; answer: string }>
+}): { system: string; user: string } {
+  const answerMap = new Map(input.answers.map((item) => [item.questionId, item.answer]))
+  return {
+    system: GRADE_SYSTEM,
+    user: [
+      `课程：${input.title}`,
+      input.unit ? `范围：第 ${input.unit.ordinal + 1} 讲《${input.unit.title}》` : '范围：整门课',
+      '题目与学生作答（本次只判下面这些题，未列出的题不要判）：',
+      ...input.questions.map((question, index) => [
+        `第 ${question.index ?? index + 1} 题：${question.prompt}`,
+        `原文：${question.source}`,
+        `学生答：${answerMap.get(question.id) ?? '（未作答）'}`,
+      ].join('\n')),
+      '材料：',
+      input.material,
+      '请只判本次提交的题并写具体反馈；results 的 index 用题目原题号。',
+    ].join('\n\n'),
+  }
+}
+
+export function buildStudyTeachbackPrompt(input: {
+  title: string
+  material: string
+  unit: StudyUnit | null
+  answer: string
+}): { system: string; user: string } {
+  return {
+    system: TEACHBACK_SYSTEM,
+    user: [
+      `课程：${input.title}`,
+      input.unit ? `范围：第 ${input.unit.ordinal + 1} 讲《${input.unit.title}》` : '范围：整门课',
+      '学生用自己的话复述：',
+      input.answer,
+      '材料：',
+      input.material,
+      '请按原文找具体缺口。',
+    ].join('\n\n'),
+  }
+}
+
+export function mergeOpening(opening: string, units: StudyUnit[]): string {
+  const first = units[0]
+  if (!opening.trim()) return first ? `我们从第 1 讲《${first.title}》开始。` : '我们开始。'
+  if (!first) return opening
+  return `${opening.trim()}\n\n我们从第 1 讲《${first.title}》开始。`
+}
+
+export function emptySummary(): StudySummary {
+  return { overview: '', mastered: [], weak: [], pitfalls: [], next: [] }
+}

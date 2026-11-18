@@ -1,0 +1,34 @@
+# 依赖与构建产物
+node_modules/
+out/
+dist/
+dist-sandbox/
+.vite/
+.tmp-profile/
+data/
+
+# 本地库与日志（库文件里有你的学习记录，不进仓库）
+*.log
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# 系统杂物
+.DS_Store
+Thumbs.db
+
+# 验收截图与课件样本体积大，只留文档
+docs/teaching-evidence/
+docs/hanchuang-evidence/
+docs/fixtures/
+.workbuddy/
+.trae/
+
+# 图标：保留 build/icon.ico 与 build/icon.png（打包要用），只忽略中间产物
+build/icons/
+build/icon-src.png
+build/ref-icon.dib
+
+# 由 build:sandbox 现场编译出来的沙箱辅助程序
+resources/office-sandbox/

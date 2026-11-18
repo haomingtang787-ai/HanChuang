@@ -1,0 +1,272 @@
+import type { HabitsView } from './teaching'
+import type { TeacherNote } from './teacher'
+
+export type StudyStatus = 'ready' | 'finished'
+
+export type StudySegment = {
+  source: string
+  explain: string
+  check: string
+}
+
+export type StudyUnit = {
+  id: string
+  ordinal: number
+  title: string
+  source: string
+  minutes: number
+  keyPoints: string[]
+  segments: StudySegment[]
+}
+
+export type StudyMessageRole = 'user' | 'assistant'
+
+/** 老师回答旁挂的整页出处：不裁图，直接用页图 + bbox 高亮。 */
+export type StudySlideCitation = {
+  pageNumber: number
+  pageId: string | null
+  quote: string
+  blockId: string | null
+  bbox: [number, number, number, number] | null
+}
+
+export type StudyMessage = {
+  id: string
+  sessionId: string
+  role: StudyMessageRole
+  unitOrdinal: number | null
+  content: string
+  citations: StudySlideCitation[]
+  createdAt: string
+}
+
+/** 当前讲送给模型的讲义页摘要；放在稳定前缀里，别每轮拼接。 */
+export type StudySlideBrief = {
+  pages: number[]
+  excerpts: Array<{ page: number; text: string }>
+}
+
+/** 学生对「停一下」问题的作答。它是学习总结判断掌握程度的直接证据。 */
+export type StudyCheck = {
+  unitOrdinal: number
+  segmentIndex: number
+  question: string
+  answer: string
+  createdAt: string
+}
+
+/** 长课件「读懂」阶段的进度，让界面在几分钟的等待里有具体进展可看。 */
+export type StudyProgress = {
+  phase: 'vision' | 'reading' | 'planning'
+  done: number
+  total: number
+  /** 正在备课哪份课件：界面靠它把进度挂到对应的课程／文件名上。 */
+  documentVersionId?: string
+  title?: string
+}
+
+export type StudySummary = {
+  overview: string
+  mastered: string[]
+  weak: string[]
+  pitfalls: string[]
+  next: string[]
+}
+
+/** 老师怎么教：0.7.1 起由主进程按自然语言选一个主技能，不把七套提示词叠在一起。 */
+export type StudySkill = 'auto' | 'diagnose' | 'explain' | 'socratic' | 'quiz' | 'error' | 'review' | 'teachback'
+
+/** direct 保持 0.6.0 的直接回答；guided 先定位卡点再讲。 */
+export type StudyMode = 'direct' | 'guided'
+
+export type StudyToolKind = 'search' | 'summary' | 'outline' | 'quiz' | 'quiz-grade' | 'teachback'
+
+export type StudyCitation = {
+  unitOrdinal: number
+  unitTitle: string
+  segmentIndex: number
+  source: string
+  /** 能逐字对回课件页时写页号；对不上就留空，界面不显示假页码。 */
+  pageNumber?: number | null
+}
+
+export type StudySearchMatch = {
+  unitOrdinal: number
+  unitTitle: string
+  segmentIndex: number
+  source: string
+  excerpt: string
+}
+
+export type StudyOutlineItem = {
+  title: string
+  points: string[]
+  source: string
+}
+
+export type StudyQuizQuestion = {
+  id: string
+  prompt: string
+  hint: string
+  source: string
+  /** 题面原句能对回课件页时的页号；对不上就不给页码。 */
+  pageNumber?: number | null
+}
+
+export type StudyQuizAnswer = {
+  questionId: string
+  answer: string
+}
+
+export type StudyQuizResult = {
+  index: number
+  correct: boolean
+  explain: string
+}
+
+/** 课堂题测留下的错题；和旧 teaching.misses 分开，避免把 lecture_id 硬塞进 study 会话。 */
+export type StudyMissItem = {
+  id: string
+  sessionId: string
+  courseId: string | null
+  unitOrdinal: number
+  questionId: string
+  prompt: string
+  answer: string
+  explain: string
+  source: string
+  pageNumber: number | null
+  createdAt: string
+  lastPracticedAt: string | null
+  resolvedAt: string | null
+}
+
+export type StudyMissList = { items: StudyMissItem[] }
+
+export type StudyReviewSummary = { misses: number }
+
+export type StudyGradeMissBody = { missId: string; remembered: boolean }
+
+/** 工具生成物：只落在课程资料里，不另开页面。 */
+export type StudyArtifactKind = 'summary' | 'outline' | 'search' | 'quiz' | 'teachback'
+
+export type StudyArtifact = {
+  id: string
+  kind: StudyArtifactKind
+  scope: string
+  title: string
+  body: {
+    text?: string
+    citations?: StudyCitation[]
+    items?: StudyOutlineItem[]
+    query?: string
+    matches?: StudySearchMatch[]
+    message?: string
+    questions?: StudyQuizQuestion[]
+    answers?: StudyQuizAnswer[]
+    graded?: boolean
+    feedback?: string
+    gaps?: string[]
+    covered?: string[]
+    answer?: string
+    /** 判题后每题的结果；index 从 1 开始，和题面顺序一致。 */
+    results?: StudyQuizResult[]
+  }
+  createdAt: string
+  updatedAt: string
+}
+
+/** 这门课背后真实花掉的 token：cachedTokens 是服务端前缀缓存命中的部分。 */
+export type StudyUsage = {
+  calls: number
+  promptTokens: number
+  /** promptTokens 里命中前缀缓存的部分。 */
+  cachedTokens: number
+  /** promptTokens 里未命中的部分；cachedTokens + cacheMissTokens = promptTokens。 */
+  cacheMissTokens: number
+  completionTokens: number
+  /** 输出里用于推理的 token，已包含在 completionTokens 中。 */
+  reasoningTokens: number
+  /** 供应商真实返回 usage 的调用数。 */
+  reportedCalls: number
+  /** 供应商没有返回 usage、只能记为 0 的调用数；这些数字不能当真实消耗。 */
+  estimatedCalls: number
+}
+
+export type StudyUsageKind = StudyUsage & { kind: string }
+
+export type DeepSeekBalanceInfo = {
+  currency: string
+  totalBalance: string
+  grantedBalance: string
+  toppedUpBalance: string
+}
+
+export type StudyUsageAudit = {
+  usage: StudyUsage
+  kinds: StudyUsageKind[]
+  balance: DeepSeekBalanceInfo[] | null
+  balanceError: string | null
+  officialNote: string
+}
+
+export type StudySessionListItem = {
+  sessionId: string
+  documentVersionId: string
+  courseId: string | null
+  title: string
+  subject: string
+  sourceName: string
+  unitCount: number
+  messageCount: number
+  status: StudyStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type StudySessionList = { items: StudySessionListItem[] }
+
+/** 左栏只需要的讲目录，不带整段讲稿，避免一开页把所有课都读进来。 */
+export type StudyCourseUnit = {
+  id: string
+  ordinal: number
+  title: string
+  minutes: number
+}
+
+export type StudyCourseSession = StudySessionListItem & {
+  units: StudyCourseUnit[]
+}
+
+export type StudyCourse = {
+  courseId: string
+  name: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type StudyCourseTreeItem = StudyCourse & {
+  sessions: StudyCourseSession[]
+}
+
+export type StudyCourseTree = { items: StudyCourseTreeItem[] }
+
+export type StudySessionDetail = StudySessionListItem & {
+  overview: string
+  outline: string[]
+  units: StudyUnit[]
+  messages: StudyMessage[]
+  checks: StudyCheck[]
+  warnings: string[]
+  truncated: boolean
+  materialChars: number
+  materialChunks: number
+  habits: HabitsView
+  summary: StudySummary | null
+  /** 老师工具生成的总结、大纲、题测、查找和复述。 */
+  artifacts: StudyArtifact[]
+  /** 下课自动生成的四段式老师手记；生成失败时为 null，不影响学习总结。 */
+  teacherNote: TeacherNote | null
+  usage: StudyUsage
+}
