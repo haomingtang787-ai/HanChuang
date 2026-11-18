@@ -123,6 +123,11 @@ export class DocumentService {
   private readonly cancelRequested = new Set<string>()
   private readonly tails = new Map<string, Promise<void>>()
   private readonly inflight = new Set<Promise<void>>()
+  private readonly waiting: string[] = []
+  private running = 0
+  /** 处理进程非正常退出时自动补一次；只补一次，避免坏文件反复重启进程。 */
+  private readonly autoRetried = new Set<string>()
+  private readonly maxConcurrent: number
   private readonly limits: Limits
   private readonly restoreTokens = new Map<string, string>()
 
@@ -146,6 +151,12 @@ export class DocumentService {
   ) {
     this.store = new Store(options.db)
     this.limits = options.limits ?? LIMITS
+    // 一次导入整个文件夹时会瞬间排几十个任务。每个任务是一个独立进程 + 一份 PDF 解析缓存，
+    // 并发跑两个 80 页 PDF 时，实测仍有约四分之一的概率被系统杀掉（退出码非 0），
+    // 用户看到的就是「处理进程失败」。默认一次只跑 1 个，其余排队；确实更快的机器可以
+    // 用 HANCHUANG_PARSE_CONCURRENCY=2 提速，代价是更大的内存峰值。
+    const configured = Number.parseInt(process.env.HANCHUANG_PARSE_CONCURRENCY ?? '', 10)
+    this.maxConcurrent = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 8) : 1
     if (options.repair !== false) this.repairOnStart()
   }
 
@@ -158,10 +169,16 @@ export class DocumentService {
   }
 
   async settle(): Promise<void> {
-    await Promise.all([...this.inflight])
+    // 排队中的任务也要算进来，否则「等它处理完」会提前返回。
+    while (this.inflight.size > 0 || this.waiting.length > 0) {
+      if (this.inflight.size === 0) this.pump()
+      if (this.inflight.size === 0) break
+      await Promise.all([...this.inflight])
+    }
   }
 
   async close(): Promise<void> {
+    this.waiting.length = 0
     for (const handle of this.live.values()) handle.kill()
     await this.settle()
     this.options.db.close()
@@ -1307,9 +1324,23 @@ export class DocumentService {
   }
 
   private start(jobId: string): void {
-    const promise = this.run(jobId)
-    this.inflight.add(promise)
-    promise.finally(() => this.inflight.delete(promise)).catch(() => undefined)
+    this.waiting.push(jobId)
+    this.pump()
+  }
+
+  private pump(): void {
+    while (this.running < this.maxConcurrent && this.waiting.length > 0) {
+      const jobId = this.waiting.shift()
+      if (!jobId) return
+      this.running += 1
+      const promise = this.run(jobId)
+        .finally(() => {
+          this.running -= 1
+          this.pump()
+        })
+      this.inflight.add(promise)
+      promise.finally(() => this.inflight.delete(promise)).catch(() => undefined)
+    }
   }
 
   private async run(jobId: string): Promise<void> {
@@ -1395,7 +1426,26 @@ export class DocumentService {
         if (!job || job.state !== 'running' || this.cancelRequested.has(jobId)) return
         if (timedOut) this.fail(job, 'RESOURCE_LIMIT', '处理超过时间上限，已停止。')
         else if (isAppError(error)) this.fail(job, error.code, error.message)
-        else this.fail(job, 'PARSE_FAILED', '处理进程失败。')
+        else if (error instanceof Error && error.message.startsWith('worker exited')) {
+          // 进程被杀多半是瞬时内存压力（整卷导入时更常见），自动换一个新进程再试一次；
+          // 第二次仍然退出才告诉用户，并把技术原因留在库里方便排查。
+          if (!this.autoRetried.has(job.id)) {
+            this.autoRetried.add(job.id)
+            const requeued = this.store.updateJob(job.id, {
+              state: 'queued',
+              stage: 'queued',
+              seq: job.seq + 1,
+              error_code: null,
+              error_message: null,
+              updated_at: nowIso(),
+            })
+            this.emit(toEvent(requeued))
+            setTimeout(() => this.start(job.id), 300)
+            console.warn(`[parse] ${job.id} 处理进程退出，自动重试一次：${error.message.slice(0, 200)}`)
+            return
+          }
+          this.fail(job, 'PARSE_FAILED', '处理进程两次中途退出，这一份暂时读不完。已经读出来的部分保留，可稍后再点重试。')
+        } else this.fail(job, 'PARSE_FAILED', '处理进程失败。')
       })
     } finally {
       await started.handle.exited

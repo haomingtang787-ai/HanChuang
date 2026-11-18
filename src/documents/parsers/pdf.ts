@@ -84,8 +84,10 @@ export async function parsePdfFile(input: {
     stopAtErrors: false,
     isEvalSupported: false,
   } as Parameters<Pdfjs['getDocument']>[0])
+  let docRef: { cleanup?: () => void } | null = null
   try {
     const doc = await task.promise
+    docRef = doc as unknown as { cleanup?: () => void }
     if (doc.numPages > input.limits.maxPages) {
       throw new AppError('LIMIT_EXCEEDED', `PDF 有 ${doc.numPages} 页，超过 ${input.limits.maxPages} 页的上限。`)
     }
@@ -231,6 +233,13 @@ export async function parsePdfFile(input: {
         status: pageNeedsReview ? 'needs_review' : 'ready',
         imagePath,
       })
+      // pdf.js 会把每页的 operator list、字体和图像缓存留在 document 上；几十页后内存只涨不落。
+      // 这一页的数据已经进 blocks/pages 了，立刻释放页级缓存。
+      try {
+        (page as unknown as { cleanup?: () => void }).cleanup?.()
+      } catch {
+        // 释放失败不影响已经取到的内容
+      }
       input.onProgress?.({ stage: 'render', completed: number, total: doc.numPages })
     }
     return { pages, blocks, issues, sourceMetadata: metadata }
@@ -242,6 +251,11 @@ export async function parsePdfFile(input: {
     }
     throw new AppError('PARSE_FAILED', 'PDF 无法解析。')
   } finally {
+    try {
+      docRef?.cleanup?.()
+    } catch {
+      // 同上：释放失败不影响已经返回的结果
+    }
     await task.destroy()
   }
 }
