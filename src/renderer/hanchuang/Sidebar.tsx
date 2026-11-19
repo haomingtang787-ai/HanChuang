@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { StudyCourseTree } from '../../shared/study'
 import type { AssetItem } from './logic'
+import { BrandMark } from './BrandMark'
 
 export type PendingUpload = { courseId: string; name: string; stage: string; dvid?: string }
 
@@ -49,8 +50,11 @@ export function Sidebar(props: Props) {
   return (
     <aside className="hc-sidebar">
       <div className="hc-brand">
-        <div className="hc-brand-name">寒窗</div>
-        <div className="hc-brand-sub">AI 授课老师</div>
+        <BrandMark />
+        <div className="hc-brand-text">
+          <div className="hc-brand-name">寒窗</div>
+          <div className="hc-brand-sub">AI 授课老师</div>
+        </div>
         <button className="hc-sidebar-collapse" onClick={props.onCollapse} title="收起左栏，课件和对话平分整屏">«</button>
       </div>
 

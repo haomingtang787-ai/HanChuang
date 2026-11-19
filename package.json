@@ -1,6 +1,6 @@
 {
   "name": "hanchuang",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "寒窗：本地 AI 授课老师。上传课件，老师逐段讲给你听，会提问、会总结、会出题，还记得你的学习习惯",
   "main": "out/main/index.js",

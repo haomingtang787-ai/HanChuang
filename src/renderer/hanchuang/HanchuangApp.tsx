@@ -5,6 +5,7 @@ import type {
   StudyCourseTree, StudyProgress, StudyQuizAnswer, StudySessionDetail, StudySessionListItem, StudyToolKind, StudyUsageAudit,
 } from '../../shared/study'
 import { ChatStream } from './ChatStream'
+import { BrandMark } from './BrandMark'
 import { Composer } from './Composer'
 import { ReviewPanel } from './ReviewPanel'
 import { SettingsPanel } from './SettingsPanel'
@@ -922,11 +923,7 @@ export function HanchuangApp() {
                 })()
               }}
             >
-              <svg className="hc-seal" viewBox="0 0 64 64" aria-hidden="true">
-                <rect x="2" y="2" width="60" height="60" rx="10" />
-                <text x="32" y="28" textAnchor="middle">寒</text>
-                <text x="32" y="53" textAnchor="middle">窗</text>
-              </svg>
+              <BrandMark />
               <div className="hc-welcome-brand">寒窗</div>
               <p className="hc-welcome-sub">把课件交给老师，一段一段讲给你听。<br />会提问、会总结、会出题，还记得你的学习习惯。</p>
               {!ai?.configured ? (
