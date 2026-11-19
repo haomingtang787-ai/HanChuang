@@ -37,7 +37,6 @@ describe('习惯画像', () => {
     const brief = habitBrief(NAMED)
     expect(brief).toContain('「小明」')
     expect(brief).toContain('最多称呼两次')
-    expect(brief).toContain('15 分钟')
   })
 
   it('没留名字时不许模型编造姓名', () => {
@@ -46,10 +45,21 @@ describe('习惯画像', () => {
     expect(brief).not.toContain('称呼为')
   })
 
-  it('讲透 / 适中 / 抓考点 给出不同的讲解字数', () => {
-    expect(habitBrief({ ...DEFAULT_HABITS, pace: 'slow' })).toContain('一百六到两百四十字')
-    expect(habitBrief({ ...DEFAULT_HABITS, pace: 'steady' })).toContain('一百二到一百八十字')
-    expect(habitBrief({ ...DEFAULT_HABITS, pace: 'exam' })).toContain('九十到一百四十字')
+  it('习惯只认学生自己写的那句话', () => {
+    const brief = habitBrief({ ...DEFAULT_HABITS, note: '公式一多就晕，先给例子' })
+    expect(brief).toContain('公式一多就晕，先给例子')
+    expect(brief).toContain('唯一依据')
+  })
+
+  it('没写习惯时不给模型塞任何假偏好', () => {
+    const brief = habitBrief(DEFAULT_HABITS)
+    expect(brief).not.toContain('分钟')
+    expect(brief).toContain('按默认讲法')
+  })
+
+  it('习惯文本压到 160 字以内并去掉首尾空白', () => {
+    expect(sanitizeHabits({ note: '  先看例子  ' }).note).toBe('先看例子')
+    expect(sanitizeHabits({ note: 'x'.repeat(200) }).note).toHaveLength(160)
   })
 
   it('连续放慢两次才会改成每天一小讲', () => {

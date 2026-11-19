@@ -129,6 +129,8 @@ export type HabitsView = {
   minutes: 15 | 25 | 40
   window: 'morning' | 'afternoon' | 'evening' | 'night'
   avoid: 'formula' | 'long' | 'noexample'
+  /** 学生自己写的一句话习惯；没写就留空。预设项只作为老数据兼容保留。 */
+  note?: string
 }
 
 export type DayMarkView = { date: string; known: number; cards: number; quizzes: number }

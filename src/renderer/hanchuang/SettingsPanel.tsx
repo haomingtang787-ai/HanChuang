@@ -67,6 +67,11 @@ export function SettingsPanel(props: Props) {
         if (ai.ok) {
           setAiForm({ baseUrl: ai.data.baseUrl || 'https://api.deepseek.com/v1', model: ai.data.model || 'deepseek-chat', visionModel: ai.data.visionModel, apiKey: '' })
           setHasKey(ai.data.hasKey)
+          // 打开设置就从接口拉一次真实模型列表，别让用户看到写死的名字。
+          if (ai.data.hasKey) {
+            const list = await api.ai.models()
+            if (alive && list.ok) setModels(list.data.models)
+          }
         }
         if (overview.ok) {
           setTeacher(overview.data)
@@ -319,40 +324,18 @@ export function SettingsPanel(props: Props) {
 
           {tab === 'habits' && habits && (
             <div className="hc-form">
-              <div className="hc-form-note">备课时老师按这些习惯拆课、选例子。改完下一门新课生效。</div>
+              <div className="hc-form-note">不用一条条选：想怎么写就怎么写，留空也行。老师照你写的这段教；没写的按默认来，上完课他自己会把观察到的东西记进「老师记忆」。</div>
               <label>怎么称呼你</label>
-              <input value={habits.name} onChange={(event) => setHabits({ ...habits, name: event.target.value })} />
-              <label>节奏</label>
-              <select value={habits.pace} onChange={(event) => setHabits({ ...habits, pace: event.target.value as HabitsView['pace'] })}>
-                <option value="slow">慢一点，掰开揉碎</option>
-                <option value="steady">正常节奏</option>
-                <option value="exam">冲刺应试</option>
-              </select>
-              <label>讲法</label>
-              <select value={habits.style} onChange={(event) => setHabits({ ...habits, style: event.target.value as HabitsView['style'] })}>
-                <option value="story">多打比方、讲故事</option>
-                <option value="define">先定义再例子</option>
-                <option value="ask">多提问引导我</option>
-              </select>
-              <label>一坐多久</label>
-              <select value={habits.minutes} onChange={(event) => setHabits({ ...habits, minutes: Number(event.target.value) as HabitsView['minutes'] })}>
-                <option value={15}>15 分钟</option>
-                <option value={25}>25 分钟</option>
-                <option value={40}>40 分钟</option>
-              </select>
-              <label>常用时段</label>
-              <select value={habits.window} onChange={(event) => setHabits({ ...habits, window: event.target.value as HabitsView['window'] })}>
-                <option value="morning">上午</option>
-                <option value="afternoon">下午</option>
-                <option value="evening">晚上</option>
-                <option value="night">深夜</option>
-              </select>
-              <label>要避开</label>
-              <select value={habits.avoid} onChange={(event) => setHabits({ ...habits, avoid: event.target.value as HabitsView['avoid'] })}>
-                <option value="formula">堆公式</option>
-                <option value="long">长篇大论</option>
-                <option value="noexample">没有例子</option>
-              </select>
+              <input value={habits.name} maxLength={16} onChange={(event) => setHabits({ ...habits, name: event.target.value })} />
+              <label>想让我怎么教（可以不填）</label>
+              <textarea
+                rows={5}
+                maxLength={160}
+                value={habits.note ?? ''}
+                placeholder="例：我数学底子薄，公式一多就晕；一次最多坐半小时；喜欢先看例子再看定义。"
+                onChange={(event) => setHabits({ ...habits, note: event.target.value })}
+              />
+              <div className="hc-form-note">{(habits.note ?? '').trim().length}/160 字。写具体的事，比写形容词有用。</div>
               <div className="hc-form-actions">
                 <button className="hc-primary" disabled={busy} onClick={() => void run(async () => {
                   const saved = unwrap(await api.teaching.habits.save(habits))

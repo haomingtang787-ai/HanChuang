@@ -10,9 +10,12 @@ export type Habits = {
   minutes: 15 | 25 | 40;
   window: StudyWindow;
   avoid: Avoid;
+  /** 学生自己写的一句话习惯；没写就留空。预设项只作为老数据兼容保留。 */
+  note?: string;
 };
 
 export const MAX_NAME = 16;
+export const MAX_NOTE = 160;
 
 export const DEFAULT_HABITS: Habits = {
   name: "",
@@ -21,6 +24,7 @@ export const DEFAULT_HABITS: Habits = {
   minutes: 25,
   window: "evening",
   avoid: "long",
+  note: "",
 };
 
 export const PACE_OPTIONS: { id: Pace; label: string }[] = [
@@ -79,7 +83,9 @@ export function sanitizeHabits(input: unknown): Habits {
     raw.avoid === "formula" || raw.avoid === "noexample" ? raw.avoid : "long";
   const name =
     typeof raw.name === "string" ? raw.name.replace(/\s+/g, " ").trim().slice(0, MAX_NAME) : "";
-  return { name, pace, style, minutes, window, avoid };
+  const note =
+    typeof raw.note === "string" ? raw.note.replace(/\r/g, "").trim().slice(0, MAX_NOTE) : "";
+  return { name, pace, style, minutes, window, avoid, note };
 }
 
 export function remembers(h: Habits, slowTaps: number): string {
@@ -109,24 +115,11 @@ export function remembers(h: Habits, slowTaps: number): string {
 
 export function habitBrief(h: Habits): string {
   const name = h.name.trim();
+  const note = (h.note ?? '').replace(/\s+/g, ' ').trim();
   return [
     name ? `学生希望被称呼为「${name}」。全文最多称呼两次。` : "学生没有留名字，用「你」，不要编造姓名。",
-    `一次大约学习 ${h.minutes} 分钟。`,
-    h.pace === "slow"
-      ? "希望讲透、可以慢。每个小讲先把句子抱住，再讲条件。teaching 一百六到两百四十字。"
-      : h.pace === "exam"
-        ? "考前想先抓会考的，但不要跳句。先点明会不会考，再把这句讲完。teaching 九十到一百四十字。"
-        : "节奏适中。先点出这句在整页里的位置，再逐句讲。teaching 一百二到一百八十字。",
-    h.style === "define"
-      ? "讲解习惯：先给这句的定义，再展开。"
-      : h.style === "ask"
-        ? "讲解习惯：先抛一个学生答得上来的小问题，紧接着自己把答案讲出来。"
-        : "讲解习惯：先用一个很短的生活比方，再回到定义。",
-    h.avoid === "formula"
-      ? "公式堆砌会让学生累。符号要逐个说成人话，不要连着甩一串。"
-      : h.avoid === "noexample"
-        ? "没有例子学生记不住。每个必考小讲里放一个具体、算得完的小例子。"
-        : "长段落会让学生走神。一个小讲只办一件事，句子不要铺太开。",
-    `请让靠前几个小讲的 minutes 相加接近 ${h.minutes}，并在 tonight 里说明这一坐就上这几讲。`,
+    note
+      ? `学生自己写的学习习惯（以这段为唯一依据，不要替他改口、不要自己加戏）：${note}`
+      : "学生没写学习习惯：不要假设他的偏好，按默认讲法来——先给定义，再举一个能算完的例子，最后点出最容易被误解的地方。",
   ].join("");
 }

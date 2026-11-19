@@ -12,6 +12,7 @@ const habits = {
   minutes: 25 as const,
   window: 'evening' as const,
   avoid: 'long' as const,
+  note: '公式一多就晕，先给例子',
 }
 
 describe('模型拆讲提示词', () => {
@@ -32,7 +33,7 @@ describe('模型拆讲提示词', () => {
     expect(system).toContain('units')
     expect(system).toContain('cards')
     expect(user).toContain('小林')
-    expect(user).toContain('25 分钟')
+    expect(user).toContain('公式一多就晕，先给例子')
     expect(user).toContain('光反应在类囊体薄膜上。')
     expect(user).toContain('第 1 页')
   })

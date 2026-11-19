@@ -10,6 +10,7 @@ type Props = {
   models: string[]
   busy: string | null
   onPrimary: () => void
+  onExpand: () => void
   onSend: (text: string) => void
   onTool: (tool: StudyToolKind) => void
   onFinish: () => void
@@ -25,7 +26,8 @@ export function Composer(props: Props) {
   const total = totalSegments(detail.units)
   const label = primaryLabel(revealed.length, total)
   const disabled = busy !== null || finished
-  const options = Array.from(new Set([ai?.model ?? '', ...models, 'deepseek-chat', 'deepseek-reasoner'].filter((item) => item !== '')))
+  // 模型只认接口拉回来的那份：不要塞 deepseek-chat 这类写死的名字，配置换了会显示错。
+  const options = Array.from(new Set([ai?.model ?? '', ...models].filter((item) => item !== '')))
   const usedTokens = detail.usage.promptTokens + detail.usage.completionTokens
   const costText = formatYuan(estimateCostYuan(ai?.model ?? '', detail.usage.promptTokens, detail.usage.cachedTokens, detail.usage.completionTokens))
 
@@ -56,6 +58,14 @@ export function Composer(props: Props) {
         <button className="hc-primary" disabled={disabled || total === 0} onClick={props.onPrimary}>
           {label}
         </button>
+        <button
+          className="hc-expand"
+          disabled={disabled || total === 0}
+          title="把这一讲从导览展开成细讲：先讲理解门槛，再讲易错处，补一个具体例子"
+          onClick={props.onExpand}
+        >
+          详细讲这一讲
+        </button>
         <button disabled={disabled} onClick={() => props.onTool('quiz')}>出题考我</button>
         <button disabled={disabled} onClick={() => props.onTool('outline')}>课件大纲</button>
         <button disabled={disabled} onClick={() => props.onTool('summary')}>总结这一讲</button>
@@ -65,7 +75,7 @@ export function Composer(props: Props) {
         <textarea
           rows={2}
           value={text}
-          placeholder="随时插嘴问老师，讲课进度不会丢。Enter 发送，Shift+Enter 换行"
+          placeholder="随时插嘴问老师，讲课进度不会丢。例：第 39 页看不懂 / 第 2 讲再来个例子。Enter 发送"
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -77,14 +87,18 @@ export function Composer(props: Props) {
         <button className="hc-send" disabled={disabled || text.trim() === ''} onClick={submit}>发送</button>
       </div>
       <div className="hc-composer-foot">
-        <select
-          className="hc-model-select"
-          value={ai?.model ?? ''}
-          disabled={busy !== null}
-          onChange={(event) => props.onModelChange(event.target.value)}
-        >
-          {options.map((model) => <option key={model} value={model}>{model}</option>)}
-        </select>
+        {options.length > 0 ? (
+          <select
+            className="hc-model-select"
+            value={ai?.model ?? ''}
+            disabled={busy !== null}
+            onChange={(event) => props.onModelChange(event.target.value)}
+          >
+            {options.map((model) => <option key={model} value={model}>{model}</option>)}
+          </select>
+        ) : (
+          <span className="hc-model-static">模型列表未拉到 · 去设置里检查地址和密钥</span>
+        )}
         <button className="hc-usage" onClick={props.onUsageClick}>
           本课 {formatTokens(usedTokens)} tokens · 缓存命中 {formatTokens(detail.usage.cachedTokens)}
         </button>

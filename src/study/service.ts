@@ -396,6 +396,7 @@ export class StudyService {
         ? units[0] ?? null
         : units.find((item) => item.ordinal === input.unitOrdinal) ?? null
       const pages = this.citationPages(session.document_version_id)
+      const focusPages = this.focusPagesForQuestion(input.content, pages)
       // 说「找原文 / 总结这一讲 / 考考我」时先执行一次性工具，不再让模型陪聊一遍。
       const intent = routeStudyToolIntent(input.content)
       if (intent) {
@@ -446,6 +447,9 @@ export class StudyService {
         skill: routeStudySkill(input.content, input.skill),
         mode: input.mode,
         slide: unit ? this.slideBriefForUnit(unit, pages) : undefined,
+        focus: focusPages.length > 0
+          ? focusPages.map((page) => ({ page: page.pageNumber, text: page.text.trim().slice(0, 900) }))
+          : undefined,
       })
       const answer = (await this.client({
         sessionId: session.id,
@@ -453,7 +457,10 @@ export class StudyService {
       }).complete(prompt.system, prompt.user, 3000, 'disabled', 'chat')).trim()
       if (!answer) throw new AiError('AI_FAILED', '模型没有返回讲解。')
       const timestamp = nowIso()
-      const citations = unit ? this.citationsForAnswer(unit, answer, pages) : []
+      const citations = this.mergeCitations(
+        unit ? this.citationsForAnswer(unit, answer, pages) : [],
+        focusPages,
+      )
       const userMessage: StudyMessageRow = {
         id: randomUUID(),
         session_id: session.id,
@@ -1134,6 +1141,45 @@ export class StudyService {
     return this.pagesForUnit(unit, pages)
       .slice(0, 3)
       .map((page) => this.citationOf(page, unit))
+  }
+
+  /**
+   * 学生嘴里说「第 39 页」时把这一页原文取出来。
+   * 导览课只带当前小讲，学生想跳到别页问，不能让它说「我手上没有原页」。
+   */
+  private focusPagesForQuestion(question: string, pages: CitationPage[]): CitationPage[] {
+    const wanted = new Set<number>()
+    for (const match of question.matchAll(/(?:第\s*)?(\d{1,4})\s*(?:[-–—~～至到]\s*(\d{1,4})\s*)?页/g)) {
+      const start = Number(match[1])
+      if (!Number.isFinite(start) || start < 1) continue
+      const end = match[2] ? Math.min(Number(match[2]), start + 2) : start
+      for (let page = start; page <= end; page += 1) wanted.add(page)
+    }
+    for (const match of question.matchAll(/\bP\.?\s*(\d{1,4})\b/gi)) {
+      const page = Number(match[1])
+      if (Number.isFinite(page) && page >= 1) wanted.add(page)
+    }
+    if (wanted.size === 0) return []
+    const ordered = pages.filter((page) => wanted.has(page.pageNumber))
+    return ordered.slice(0, 3)
+  }
+
+  private mergeCitations(base: StudySlideCitation[], extra: CitationPage[]): StudySlideCitation[] {
+    const seen = new Set(base.map((item) => item.pageNumber))
+    const merged = [...base]
+    for (const page of extra) {
+      if (seen.has(page.pageNumber)) continue
+      seen.add(page.pageNumber)
+      const block = page.blocks[0]
+      merged.push({
+        pageNumber: page.pageNumber,
+        pageId: page.pageId,
+        quote: (block?.text ?? page.text).trim().slice(0, 120),
+        blockId: block?.id ?? null,
+        bbox: block?.bbox ?? null,
+      })
+    }
+    return merged.slice(0, 4)
   }
 
   private citationsForAnswer(unit: StudyUnit, answer: string, pages: CitationPage[]): StudySlideCitation[] {

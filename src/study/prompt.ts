@@ -128,6 +128,8 @@ export function buildStudyChatPrompt(input: {
   skill?: Exclude<StudySkill, 'auto'>
   mode?: 'direct' | 'guided'
   slide?: StudySlideBrief
+  /** 学生点名问到、但可能不在当前小讲里的页：把原文带上，别让老师说"我手上没有"。 */
+  focus?: { page: number; text: string }[]
 }): { system: string; user: string } {
   const teacherSystem = input.teacher
     ? `你的名字是「${input.teacher.name}」。保持同一个人格：${input.teacher.tone}。不要因为换了学科就变成另一个人。`
@@ -160,6 +162,13 @@ export function buildStudyChatPrompt(input: {
         '回答时先指出“看第几页的哪句话/哪个式子/哪张图”，再解释；至少引用一处原文；页面上没有的图或公式不要编造。',
       ].join('\n')
     : ''
+  const focusText = input.focus && input.focus.length > 0
+    ? [
+        '学生点名要看的页（下面是这一页的原文，直接拿它讲，不许说自己看不到）：',
+        ...input.focus.map((item) => `第 ${item.page} 页：${item.text}`),
+        '学生说的页不在上面时，只说明缺哪一页，不要凭印象编造。',
+      ].join('\n')
+    : ''
   const history = input.messages
     .slice(-12)
     .map((message) => `${message.role === 'user' ? '学生' : '老师'}：${message.content}`)
@@ -181,6 +190,7 @@ export function buildStudyChatPrompt(input: {
     index.length ? `全课要点索引（学生问到别的讲时用它接回去，不要编造索引里没有的内容）：\n${index.join('\n')}` : '',
     unitText,
     slideText,
+    focusText,
     history ? `最近对话：\n${history}` : '',
     `学生现在问：${input.question}`,
     '请先直接回答这个问题，再把它接回本讲原文；不要复述整段讲稿。',

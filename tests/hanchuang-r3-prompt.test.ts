@@ -69,4 +69,19 @@ describe('讲解深度', () => {
     })
     expect(prompt.system).toContain('小例子')
   })
+
+  test('学生点名第 39 页时，把整页原文塞进提示词，不许说手上没有', () => {
+    const prompt = buildStudyChatPrompt({
+      overview: '总览',
+      outline: ['第一讲'],
+      units: [unit],
+      unit,
+      messages: [],
+      question: '第39页我看不懂',
+      habits,
+      focus: [{ page: 39, text: '页表项的末位是有效位，清零表示这一页不在内存里。' }],
+    })
+    expect(prompt.user).toContain('第 39 页：页表项的末位是有效位，清零表示这一页不在内存里。')
+    expect(prompt.user).toContain('不许说自己看不到')
+  })
 })

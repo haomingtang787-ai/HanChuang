@@ -268,6 +268,7 @@ export function HanchuangApp() {
         if (aiResult.data.configured) {
           const modelList = await api.ai.models()
           if (alive && modelList.ok) setModels(modelList.data.models)
+          if (alive && !modelList.ok) notify('bad', `模型列表没拉下来：${modelList.error.message}`)
         }
       }
       if (teacherResult.ok) setTeacherName(teacherResult.data.persona.name)
@@ -589,6 +590,16 @@ export function HanchuangApp() {
     if (totalSegments(current.units) > 0) void runTool('summary')
   }
 
+  /** 「详细讲这一讲」：把当前这一讲从导览展开成细讲，复用对话层已有的展开规则。 */
+  function expandCurrentUnit(): void {
+    const current = detailRef.current
+    if (!current || busy !== null) return
+    const ordinal = currentUnitOrdinal(current.units, revealedMap[current.sessionId] ?? [])
+    const unit = current.units.find((item) => item.ordinal === ordinal)
+    const label = unit?.title ? `「${unit.title}」` : '这一讲'
+    void send(`这一讲${label}刚才只讲了导览版，请把它展开讲细：先讲这一段最关键的理解门槛，再讲最容易误解的地方，最后补一个具体例子；不要一次把整份材料倒完。`)
+  }
+
   async function send(text: string): Promise<void> {
     const current = detailRef.current
     if (!api || !current || busy !== null) return
@@ -901,6 +912,7 @@ export function HanchuangApp() {
               models={models}
               busy={busy}
               onPrimary={primaryAction}
+              onExpand={expandCurrentUnit}
               onSend={(text) => void send(text)}
               onTool={(tool) => void runTool(tool)}
               onFinish={() => void finish()}
@@ -984,6 +996,7 @@ export function HanchuangApp() {
               void (async () => {
                 const list = await api.ai.models()
                 if (list.ok) setModels(list.data.models)
+                else notify('bad', `模型列表没拉下来：${list.error.message}`)
               })()
             }
           }}

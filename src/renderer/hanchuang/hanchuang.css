@@ -402,6 +402,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .hc-primary:hover:not(:disabled) { color: #fff; background: linear-gradient(180deg, var(--hc-accent-deep) 0%, var(--hc-accent-deep) 100%); border-color: var(--hc-accent-deep); box-shadow: var(--hc-shadow); }
 .hc-app[data-theme='dark'] .hc-primary { color: #10201a; }
 .hc-app[data-theme='dark'] .hc-primary:hover:not(:disabled) { color: #10201a; }
+/* 「详细讲这一讲」：导览之后的加深入口，用强调色描边和字重，和白底按钮、实心主按钮都分开 */
+.hc-expand { color: var(--hc-accent); border-color: var(--hc-accent); background: var(--hc-panel); font-weight: 600; }
+.hc-expand:hover:not(:disabled) { color: var(--hc-accent-deep); border-color: var(--hc-accent-deep); background: var(--hc-accent-soft); }
+.hc-app[data-theme='dark'] .hc-expand { color: var(--hc-accent); border-color: var(--hc-accent-line); background: transparent; }
+.hc-app[data-theme='dark'] .hc-expand:hover:not(:disabled) { color: var(--hc-accent-deep); border-color: var(--hc-accent); background: var(--hc-accent-soft); }
 .hc-danger { color: var(--hc-danger); }
 .hc-danger:hover:not(:disabled) { border-color: var(--hc-danger); color: var(--hc-danger); background: var(--hc-danger-soft); }
 
@@ -589,12 +594,18 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 
 /* ---------- 素材（文件夹导入，未备课） ---------- */
 .hc-asset-head { margin: 10px 0 2px; padding-left: 4px; font-size: 11px; color: var(--hc-faint); letter-spacing: 0.1em; }
-.hc-session-row.asset { cursor: default; color: var(--hc-text); }
-.hc-session-row.asset .hc-session-title { color: var(--hc-quote-text); }
+/* 素材行两段式：第一行原标题（最多两行不截断成省略号），第二行小字放备课预估价 */
+.hc-session-row.asset { cursor: default; color: var(--hc-text); align-items: flex-start; padding-top: 7px; padding-bottom: 7px; }
+.hc-session-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.hc-session-row.asset .hc-session-title {
+  flex: none; color: var(--hc-text); font-weight: 500; line-height: 1.4;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; white-space: normal; overflow-wrap: anywhere;
+}
 .hc-asset-prep { font-size: 12px; padding: 2px 10px !important; border-radius: 999px; border-color: var(--hc-accent-line) !important; color: var(--hc-accent) !important; }
 .hc-asset-prep:hover { background: var(--hc-accent-soft) !important; }
-.hc-session-row.asset .hc-row-actions { display: inline-flex; }
-.hc-asset-cost { margin-left: auto; padding-left: 8px; flex-shrink: 0; font-size: 11px; color: var(--hc-faint); font-variant-numeric: tabular-nums; }
+.hc-session-row.asset .hc-row-actions { display: inline-flex; align-items: center; }
+.hc-asset-cost { margin: 0; padding: 0; font-size: 11px; line-height: 1.35; color: var(--hc-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------- 备课进度条 ---------- */
 .hc-prep-banner {

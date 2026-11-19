@@ -142,12 +142,14 @@ export function Sidebar(props: Props) {
                   )}
                   {courseAssets.map((asset) => (
                     <div key={`a${asset.documentVersionId}`} className="hc-session-row asset">
-                      <span className="hc-session-title" title={asset.name}>{asset.name}</span>
-                      {props.assetCosts[asset.documentVersionId] && (
-                        <span className="hc-asset-cost" title="按页数本地预估，实际以备课后的真实用量为准">
-                          {props.assetCosts[asset.documentVersionId]}
-                        </span>
-                      )}
+                      <span className="hc-session-main">
+                        <span className="hc-session-title" title={asset.name}>{asset.name}</span>
+                        {props.assetCosts[asset.documentVersionId] && (
+                          <span className="hc-asset-cost" title="按页数本地预估，实际以备课后的真实用量为准">
+                            预估 {props.assetCosts[asset.documentVersionId]}
+                          </span>
+                        )}
+                      </span>
                       <span className="hc-row-actions" onClick={(event) => event.stopPropagation()}>
                         <button
                           className="hc-asset-prep"
