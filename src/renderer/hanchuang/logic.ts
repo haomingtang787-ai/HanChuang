@@ -331,14 +331,15 @@ export type PrepMode = 'overview' | 'page'
 const PREP_MODE_KEY = 'hc.prepMode.v1'
 
 export function readPrepMode(raw: string | null): PrepMode {
-  return raw === 'page' ? 'page' : 'overview'
+  // 默认按页拆：没主动选过「按主干」的一律走一页一讲（1.5.0 起）。
+  return raw === 'overview' ? 'overview' : 'page'
 }
 
 export function loadPrepMode(): PrepMode {
   try {
     return readPrepMode(localStorage.getItem(PREP_MODE_KEY))
   } catch {
-    return 'overview'
+    return 'page'
   }
 }
 

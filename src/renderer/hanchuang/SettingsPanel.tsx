@@ -336,8 +336,8 @@ export function SettingsPanel(props: Props) {
                   savePrepMode(next)
                 }}
               >
-                <option value="overview">按主干拆（1–4 讲，先搭框架）</option>
                 <option value="page">按页拆（一页至少一讲，一点一点讲）</option>
+                <option value="overview">按主干拆（1–4 讲，先搭框架）</option>
               </select>
               <div className="hc-form-note">
                 {prepMode === 'page'
