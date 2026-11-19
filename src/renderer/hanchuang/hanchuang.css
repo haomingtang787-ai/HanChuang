@@ -165,7 +165,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   border-right: 1px solid var(--hc-border);
 }
 .hc-brand { padding: 18px 16px 12px; display: flex; align-items: center; gap: 10px; }
-/* 印记：深墨绿底色，面板上也不脏；阴影用静态值即可（左栏底是渐变，别用令牌阴影） */
+/* 印记：宣纸底 + 墨字，和桌面图标同一枚；浅色面板上也靠那圈极淡的压边立住 */
 .hc-seal { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; box-shadow: 0 1px 2px rgba(20, 30, 26, 0.18); }
 .hc-brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
 .hc-brand-name {
