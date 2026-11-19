@@ -274,6 +274,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .hc-rail-dot { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--hc-faint); opacity: 0.7; }
 .hc-rail-dot.done { background: var(--hc-accent); border-color: var(--hc-accent); opacity: 1; }
 .hc-rail-dot.next { border-color: var(--hc-accent); opacity: 1; animation: hc-pulse 1.6s infinite; }
+/* 逐页课堂可能有几十讲，进度条不再铺满胶囊：只留当前第几讲 + 标题 + 一条细进度 */
+.hc-rail-summary { flex: 1; min-width: 0; font-size: 12px; color: var(--hc-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-rail-progress { width: 160px; height: 4px; border-radius: 999px; background: var(--hc-accent-line); overflow: hidden; }
+.hc-rail-progress span { display: block; height: 100%; background: var(--hc-accent); border-radius: inherit; transition: width 0.2s ease; }
 
 .hc-warnings {
   background: var(--hc-warn-bg); border: 1px solid var(--hc-warn-border); border-radius: var(--hc-radius);

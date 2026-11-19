@@ -28,6 +28,7 @@ export function ChatStream(props: Props) {
   const doneSet = new Set(revealed.map((item) => `${item.unitOrdinal}:${item.segmentIndex}`))
   const next = nextSegment(detail.units, revealed)
   const orderedUnits = [...detail.units].sort((a, b) => a.ordinal - b.ordinal)
+  const totalDots = detail.units.reduce((sum, unit) => sum + unit.segments.length, 0)
 
   useEffect(() => {
     const node = containerRef.current
@@ -46,7 +47,21 @@ export function ChatStream(props: Props) {
       <div className="hc-stream-inner">
         {orderedUnits.length > 0 && (
           <div className="hc-rail" aria-label="讲课进度">
-            {orderedUnits.map((unit) => (
+            {orderedUnits.length > 10 ? (
+              <>
+                <div className="hc-rail-unit current" title={next ? orderedUnits[next.unitOrdinal]?.title : '这一讲已讲完'}>
+                  <span className="hc-rail-name">
+                    第 {Math.min(orderedUnits.length, (next?.unitOrdinal ?? orderedUnits.length - 1) + 1)}/{orderedUnits.length} 讲
+                  </span>
+                </div>
+                <div className="hc-rail-summary">
+                  {next ? orderedUnits[next.unitOrdinal]?.title ?? '' : '全部讲完'}
+                </div>
+                <div className="hc-rail-progress" role="progressbar" aria-valuenow={doneSet.size} aria-valuemin={0} aria-valuemax={totalDots}>
+                  <span style={{ width: `${totalDots > 0 ? Math.round((doneSet.size / totalDots) * 100) : 0}%` }} />
+                </div>
+              </>
+            ) : orderedUnits.map((unit) => (
               <div
                 key={unit.ordinal}
                 className={`hc-rail-unit${next?.unitOrdinal === unit.ordinal ? ' current' : ''}`}

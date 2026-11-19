@@ -15,7 +15,7 @@ import { SourceSearch } from './SourceSearch'
 import { CODE_EXTENSIONS } from '../../shared/contract'
 import {
   currentUnitOrdinal, dropAsset, estimateCostYuan, estimatePrepCost, formatYuan, formatYuanRange, loadAssets, loadPanePref,
-  loadSidebarOpen, loadStudyDays, nextSegment, prepPhaseLabel, saveAssets, savePanePref, saveSidebarOpen, streakOf, todayKey,
+  loadPrepMode, loadSidebarOpen, loadStudyDays, nextSegment, prepPhaseLabel, saveAssets, savePanePref, saveSidebarOpen, streakOf, todayKey,
   totalSegments, touchStudyDay, upsertAsset,
   type AssetItem, type PanePref, type Reveal,
 } from './logic'
@@ -189,16 +189,21 @@ export function HanchuangApp() {
       return
     }
     // 备课前先把价说清楚：只读本地页数，不调模型。
+    const prepMode = loadPrepMode()
     const info = await api.documents.get({ documentVersionId: meta.dvid })
     if (info.ok) {
       const est = estimatePrepCost(info.data.format, info.data.pageCount, info.data.blockCount)
       const tokens = `${Math.round(est.tokensLow / 1000)}k–${Math.round(est.tokensHigh / 1000)}k tokens`
       const money = formatYuanRange(est.yuanLow, est.yuanHigh)
       const size = est.pages > 0 ? `${est.pages} 页` : `${Math.max(1, info.data.blockCount)} 段原文`
+      const modeLine = prepMode === 'page'
+        ? `按页拆：每页至少一讲，约 ${Math.max(1, est.pages || info.data.blockCount)} 讲；备课调用比导览多，费用会比上面的估价更高。`
+        : '按主干拆：合并成 1–4 讲，先搭框架。'
       const confirmed = window.confirm(
         `《${meta.name}》共 ${size}，备课一次预计 ${tokens}（${money}${est.readsImages ? '，含读图' : ''}）。\n`
+        + `${modeLine}\n`
         + '讲稿一次生成，之后逐段上课、反复「继续上课」都不再花钱；只有你追问、出题、总结才另算。\n'
-        + '继续备课？',
+        + '继续备课？（拆法可以在设置 → 我的习惯里改）',
       )
       if (!confirmed) {
         notify('info', '已取消备课，没有花 token')
@@ -213,6 +218,7 @@ export function HanchuangApp() {
       documentVersionId: meta.dvid,
       title: meta.name,
       courseId: meta.courseId,
+      granularity: prepMode,
     })
     if (!result.ok) {
       notify('bad', result.error.message)

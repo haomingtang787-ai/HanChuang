@@ -113,6 +113,55 @@ export type DigestDraft = {
   pitfalls: string[]
 }
 
+/** 逐页拆讲的单批结果：每页至少一讲，因此允许远超 6 讲；跳过页单独回报。 */
+export type PagePlanDraft = {
+  units: StudyPlanDraft['units']
+  skipped: number[]
+}
+
+export function parsePagePlan(raw: string, options: { maxUnits: number }): PagePlanDraft {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(unwrap(raw))
+  } catch (error) {
+    if (error instanceof ArgumentError) throw error
+    throw new ArgumentError('模型返回的逐页拆讲不是 JSON 格式。')
+  }
+  const root = record(parsed)
+  const rawUnits = list(root.units)
+  if (rawUnits.length === 0) throw new ArgumentError('这一批页没有拆出任何小讲。')
+  if (rawUnits.length > options.maxUnits) {
+    throw new ArgumentError(`这一批拆出 ${rawUnits.length} 讲，超过本批上限 ${options.maxUnits} 讲。`)
+  }
+  const units = rawUnits.map((item, index) => {
+    const row = record(item)
+    const title = text(row.title, `第 ${index + 1} 页`)
+    const source = text(row.source, `第 ${index + 1} 页`)
+    const rawSegments = list(row.segments)
+    if (rawSegments.length === 0) throw new ArgumentError(`第 ${index + 1} 讲没有逐句讲稿。`)
+    const segments = rawSegments
+      .map((segment) => {
+        const seg = record(segment)
+        return { source: text(seg.source), explain: text(seg.explain), check: text(seg.check) }
+      })
+      .filter((segment) => segment.source && segment.explain)
+      .slice(0, 3)
+    if (segments.length === 0) throw new ArgumentError(`第 ${index + 1} 讲的逐句讲稿缺少原文或解释。`)
+    return {
+      title,
+      source,
+      minutes: clampInt(row.minutes, 3, 8, 4),
+      keyPoints: stringList(row.keyPoints).slice(0, 3),
+      segments,
+    }
+  })
+  const skipped = list(root.skipped)
+    .map((item) => (typeof item === 'number' ? item : Number(typeof item === 'string' ? item.trim() : '')))
+    .filter((item) => Number.isInteger(item) && item > 0)
+    .slice(0, 40)
+  return { units, skipped }
+}
+
 export function parseDigest(raw: string): DigestDraft {
   let parsed: unknown
   try {

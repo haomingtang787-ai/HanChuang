@@ -5,6 +5,7 @@ import type { Result, StorageUsage, LibraryStats } from '../../shared/contract'
 import type { AppSettingsView, ClearScope } from '../../shared/data'
 import type { HabitsView } from '../../shared/teaching'
 import type { TeacherMemoryKind, TeacherOverview } from '../../shared/teacher'
+import { loadPrepMode, savePrepMode, type PrepMode } from './logic'
 
 type Props = {
   onClose: () => void
@@ -40,6 +41,7 @@ export function SettingsPanel(props: Props) {
   const [persona, setPersona] = useState({ name: '', pronoun: 'she' as 'she' | 'they', tone: '', boundaries: '' })
   const [profile, setProfile] = useState({ goal: '', level: '', subjects: '', weeklyMinutes: 300, notes: '' })
   const [habits, setHabits] = useState<HabitsView | null>(null)
+  const [prepMode, setPrepMode] = useState<PrepMode>(() => loadPrepMode())
   const [settings, setSettings] = useState<AppSettingsView | null>(null)
   const [storage, setStorage] = useState<StorageUsage | null>(null)
   const [stats, setStats] = useState<LibraryStats | null>(null)
@@ -325,6 +327,23 @@ export function SettingsPanel(props: Props) {
           {tab === 'habits' && habits && (
             <div className="hc-form">
               <div className="hc-form-note">不用一条条选：想怎么写就怎么写，留空也行。老师照你写的这段教；没写的按默认来，上完课他自己会把观察到的东西记进「老师记忆」。</div>
+              <label>备课怎么拆</label>
+              <select
+                value={prepMode}
+                onChange={(event) => {
+                  const next: PrepMode = event.target.value === 'page' ? 'page' : 'overview'
+                  setPrepMode(next)
+                  savePrepMode(next)
+                }}
+              >
+                <option value="overview">按主干拆（1–4 讲，先搭框架）</option>
+                <option value="page">按页拆（一页至少一讲，一点一点讲）</option>
+              </select>
+              <div className="hc-form-note">
+                {prepMode === 'page'
+                  ? '按页拆：每页单独备课、单独上课，页数多时讲数就是页数量级，备课费用和时间会更高；封面、目录、致谢这类页会自动跳过。'
+                  : '按主干拆：整份材料合并成 1–4 讲，先搭主干，细节留到你追问。'}
+              </div>
               <label>怎么称呼你</label>
               <input value={habits.name} maxLength={16} onChange={(event) => setHabits({ ...habits, name: event.target.value })} />
               <label>想让我怎么教（可以不填）</label>

@@ -38,7 +38,8 @@ import type { Habits } from '../teaching/habits'
 import type { TeacherService } from '../teaching/teacherService'
 import { DEFAULT_HABITS, sanitizeHabits } from '../teaching/habits'
 import { DIRECT_PLAN_CHARS, MAX_MATERIAL_CHARS, digestMaterial, renderDigests } from './digest'
-import { parseQuizGrade, parseStudyPlan, parseStudyQuiz, parseStudySummary, parseTeacherNote, parseTeachback } from './parse'
+import { planPagewise } from './pagewise'
+import { parseQuizGrade, parseStudyPlan, parseStudyQuiz, parseStudySummary, parseTeacherNote, parseTeachback, type StudyPlanDraft } from './parse'
 import {
   buildStudyChatPrompt,
   buildStudyPlanPrompt,
@@ -252,9 +253,10 @@ export class StudyService {
       const client = this.client(usageScope)
       const warnings = [...material.warnings]
       // 长课件不再截断成前 20 万字：先按页分段逐段读懂，再拿结构化理解去拆课。
+      // 逐页拆讲不走这条：它直接按页读原文拆，不需要先花钱做一遍分段理解。
       let digests = ''
       let chunkCount = 1
-      if (material.text.length > DIRECT_PLAN_CHARS) {
+      if (input.granularity !== 'page' && material.text.length > DIRECT_PLAN_CHARS) {
         const materialSha = createHash('sha256').update(material.text).digest('hex')
         const cached = this.store.findMaterialDigest(input.documentVersionId, materialSha)
         if (cached) {
@@ -287,34 +289,61 @@ export class StudyService {
           })
         }
       }
-      const planInput = {
-        title: input.title || meta.displayName,
-        subject: input.subject || '',
-        material: digests ? '' : material.text,
-        habits,
-        teacher: this.options.teacher?.context(input.subject || ''),
-        truncated: material.truncated,
-        digests: digests || undefined,
-        chunkCount,
-      }
-      const prompt = buildStudyPlanPrompt(planInput)
-      this.progress({ ...progressBase, phase: 'planning', done: 0, total: 0 })
-      // 24 讲 × 8 段的讲稿 JSON 换算成 token 轻松超过 8000；上限太小会被截断成非法 JSON。
-      const raw = await client.complete(prompt.system, prompt.user, 24_000, 'disabled', 'plan')
-      let plan
-      try {
-        plan = parseStudyPlan(raw, {
+      let plan: StudyPlanDraft
+      if (input.granularity === 'page') {
+        this.progress({ ...progressBase, phase: 'planning', done: 0, total: 0 })
+        const pageOutcome = await planPagewise(client, {
           title: input.title || meta.displayName,
           subject: input.subject || '',
+          material: material.text,
+          habits,
+          onProgress: (done, total) => this.progress({ ...progressBase, phase: 'planning', done, total }),
         })
-      } catch (error) {
-        if (!(error instanceof ArgumentError)) throw error
-        const repair = buildStudyPlanPrompt({ ...planInput, repairNote: error.message })
-        const repaired = await client.complete(repair.system, repair.user, 24_000, 'disabled', 'plan-repair')
-        plan = parseStudyPlan(repaired, {
+        warnings.push(...pageOutcome.warnings)
+        if (pageOutcome.skipped.length > 0) {
+          const shown = pageOutcome.skipped.length > 6
+            ? `${pageOutcome.skipped.slice(0, 6).join('、')} 等 ${pageOutcome.skipped.length}`
+            : pageOutcome.skipped.join('、')
+          warnings.push(`第 ${shown} 页没有知识内容，逐页拆讲时已跳过。`)
+        }
+        if (pageOutcome.units.length === 0) throw new ArgumentError('逐页拆讲没有产出任何一讲，换一份课件试试。')
+        const pageFirst = pageOutcome.units[0]?.source ?? '第 1 页'
+        plan = {
           title: input.title || meta.displayName,
           subject: input.subject || '',
-        })
+          overview: `《${input.title || meta.displayName}》按页拆成 ${pageOutcome.units.length} 讲，一页一页往下讲；每讲只抓这一页的关键原文，讲完就停一下问一句。`,
+          opening: `这次不分大讲，直接按页拆：从上往下，一页一页来（起点是${pageFirst}）。`,
+          units: pageOutcome.units,
+        }
+      } else {
+        const planInput = {
+          title: input.title || meta.displayName,
+          subject: input.subject || '',
+          material: digests ? '' : material.text,
+          habits,
+          teacher: this.options.teacher?.context(input.subject || ''),
+          truncated: material.truncated,
+          digests: digests || undefined,
+          chunkCount,
+        }
+        const prompt = buildStudyPlanPrompt(planInput)
+        this.progress({ ...progressBase, phase: 'planning', done: 0, total: 0 })
+        // 24 讲 × 8 段的讲稿 JSON 换算成 token 轻松超过 8000；上限太小会被截断成非法 JSON。
+        const raw = await client.complete(prompt.system, prompt.user, 24_000, 'disabled', 'plan')
+        try {
+          plan = parseStudyPlan(raw, {
+            title: input.title || meta.displayName,
+            subject: input.subject || '',
+          })
+        } catch (error) {
+          if (!(error instanceof ArgumentError)) throw error
+          const repair = buildStudyPlanPrompt({ ...planInput, repairNote: error.message })
+          const repaired = await client.complete(repair.system, repair.user, 24_000, 'disabled', 'plan-repair')
+          plan = parseStudyPlan(repaired, {
+            title: input.title || meta.displayName,
+            subject: input.subject || '',
+          })
+        }
       }
       const timestamp = nowIso()
       const grounded = groundUnits(plan.units.map((unit, index) => ({
@@ -1421,6 +1450,7 @@ export class StudyService {
     title: string
     subject: string
     courseId: string | null
+    granularity: 'overview' | 'page'
   } {
     if (!isPlainObject(body)) throw new ArgumentError('请求格式不正确。')
     const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : ''
@@ -1431,7 +1461,18 @@ export class StudyService {
     const subject = typeof body.subject === 'string' ? body.subject.trim().slice(0, 60) : ''
     const rawCourseId = typeof body.courseId === 'string' ? body.courseId.trim() : ''
     if (rawCourseId && !isUuid(rawCourseId)) throw new ArgumentError('courseId 不是有效的课程。')
-    return { requestId, documentVersionId, title, subject, courseId: rawCourseId || null }
+    const rawGranularity = body.granularity
+    if (rawGranularity != null && rawGranularity !== 'overview' && rawGranularity !== 'page') {
+      throw new ArgumentError('granularity 只能是 overview 或 page。')
+    }
+    return {
+      requestId,
+      documentVersionId,
+      title,
+      subject,
+      courseId: rawCourseId || null,
+      granularity: rawGranularity === 'page' ? 'page' : 'overview',
+    }
   }
 
   private sendBody(body: unknown): { sessionId: string; content: string; unitOrdinal: number | null; mode: StudyMode; skill: StudySkill } {

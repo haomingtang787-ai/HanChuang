@@ -325,3 +325,28 @@ export function saveSidebarOpen(open: boolean): void {
   }
 }
 
+/* ---------- 备课怎么拆：按主干（1–4 讲）还是按页（一页至少一讲） ---------- */
+export type PrepMode = 'overview' | 'page'
+
+const PREP_MODE_KEY = 'hc.prepMode.v1'
+
+export function readPrepMode(raw: string | null): PrepMode {
+  return raw === 'page' ? 'page' : 'overview'
+}
+
+export function loadPrepMode(): PrepMode {
+  try {
+    return readPrepMode(localStorage.getItem(PREP_MODE_KEY))
+  } catch {
+    return 'overview'
+  }
+}
+
+export function savePrepMode(mode: PrepMode): void {
+  try {
+    localStorage.setItem(PREP_MODE_KEY, mode === 'page' ? 'page' : 'overview')
+  } catch {
+    // 偏好存不下只影响下次默认值
+  }
+}
+

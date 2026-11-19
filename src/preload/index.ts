@@ -158,7 +158,7 @@ const desk = {
       invoke<import('../shared/research').ResearchResult>(IpcChannel.researchVerify, body),
   },
   study: {
-    create: (body: { requestId: string; documentVersionId: string; title?: string; subject?: string; courseId?: string | null }) =>
+    create: (body: { requestId: string; documentVersionId: string; title?: string; subject?: string; courseId?: string | null; granularity?: 'overview' | 'page' }) =>
       invoke<import('../shared/study').StudySessionDetail>(IpcChannel.studyCreate, body),
     list: () => invoke<import('../shared/study').StudySessionList>(IpcChannel.studyList, {}),
     courses: () => invoke<import('../shared/study').StudyCourseTree>(IpcChannel.studyCourses, {}),
