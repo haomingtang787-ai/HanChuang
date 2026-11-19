@@ -34,10 +34,17 @@ describe('寒窗设计系统', () => {
   })
 
   it('圆角与字体是全局尺度，只定义一次由夜间继承', () => {
-    for (const token of ['--hc-radius-sm', '--hc-radius', '--hc-radius-card', '--hc-radius-lg', '--hc-sans', '--hc-kai', '--hc-mono']) {
+    for (const token of ['--hc-radius-sm', '--hc-radius', '--hc-radius-card', '--hc-radius-lg', '--hc-sans', '--hc-display', '--hc-kai', '--hc-mono']) {
       expect(light, `基础尺度缺少 ${token}`).toContain(`${token}:`)
     }
     expect(dark).not.toContain('--hc-radius-card:')
+    expect(dark).not.toContain('--hc-display:')
+  })
+
+  it('展示字阶真的用在了品牌与大标题上', () => {
+    expect(css).toMatch(/\.hc-brand-name\s*{[^}]*font-family: var\(--hc-display\)/)
+    expect(css).toMatch(/\.hc-welcome-brand\s*{[^}]*font-family: var\(--hc-display\)/)
+    expect(css).toMatch(/\.hc-modal-title\s*{[^}]*font-family: var\(--hc-display\)/)
   })
 
   it('输入区在聚焦时整体高亮，而不是只有 textarea 变边框', () => {
@@ -84,7 +91,7 @@ describe('应用图标资产', () => {
   })
 
   it('小尺寸图标里暖灯仍是可辨认的实心色块', async () => {
-    // 16px 下左下那一格必须是暖色实心块，而不是被光晕糊掉；直接数像素。
+    // 16px 下拱体底部必须是暖色实心块，而不是被光晕糊掉；直接数像素。
     const { loadImage, createCanvas } = await import('@napi-rs/canvas')
     const image = await loadImage(path.join(root, 'build/icons/icon-16.png'))
     expect(image.width).toBe(16)
@@ -93,13 +100,16 @@ describe('应用图标资产', () => {
     ctx.drawImage(image, 0, 0)
     const { data } = ctx.getImageData(0, 0, 16, 16)
     let warm = 0
-    for (let y = 8; y < 14; y += 1) {
-      for (let x = 2; x < 8; x += 1) {
+    let ivory = 0
+    for (let y = 2; y < 14; y += 1) {
+      for (let x = 2; x < 14; x += 1) {
         const at = (y * 16 + x) * 4
         const [r, g, b, a] = [data[at], data[at + 1], data[at + 2], data[at + 3]]
         if (a > 200 && r > 170 && g > 100 && b < 160 && r - b > 60) warm += 1
+        if (a > 200 && r > 225 && g > 215) ivory += 1
       }
     }
-    expect(warm, '16px 左下角没有可辨认的暖灯色块').toBeGreaterThanOrEqual(6)
+    expect(warm, '16px 拱底没有可辨认的暖色').toBeGreaterThanOrEqual(6)
+    expect(ivory, '16px 拱体象牙白不够，轮廓会糊').toBeGreaterThanOrEqual(20)
   })
 })
