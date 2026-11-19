@@ -37,7 +37,7 @@ import {
 import { safeDisplayName, safeStoredName, sanitizeDocumentText } from '../shared/text'
 import { buildFtsQuery, snippetText, type SearchList } from '../shared/search'
 import type { HighlightCreateBody, HighlightList, HighlightView } from '../shared/highlights'
-import type { AutoBackupResult, PickBackupDirResult, RestoreApplied, RestorePreview, AppSettingsView, SaveAppSettingsBody, BudgetStatus } from '../shared/data'
+import type { AutoBackupResult, PickBackupDirResult, RestoreApplied, RestorePreview, AppSettingsView, SaveAppSettingsBody, BudgetStatus, ClearDataBody, ClearDataResult, ClearScope } from '../shared/data'
 import type { OfficeGateway } from '../providers/officeGateway'
 import { officeIsolationStatus } from '../providers/isolation'
 import { planOfficeConversion } from '../providers/officeGateway'
@@ -707,6 +707,72 @@ export class DocumentService {
       cards: counts.cards,
       misses: counts.misses,
     }
+  }
+
+  /**
+   * 清除本机数据。默认先写一份备份（用户可关掉），再清库、清文件、VACUUM 回收空间。
+   * 返回被删掉的数量和实际回收的字节数，设置面板直接展示。
+   */
+  async clearData(body: ClearDataBody): Promise<Result<ClearDataResult>> {
+    const requestId = randomUUID()
+    try {
+      const scope: ClearScope = body?.scope === 'all' ? 'all' : 'content'
+      const before = this.store.stats()
+      const coursesBefore = countRows(this.options.db, 'study_courses')
+      const beforeBytes = this.totalBytes()
+      let backupPath: string | null = null
+      if (body?.backup !== false) {
+        const parent = path.join(path.dirname(this.options.root), 'backups')
+        await fs.promises.mkdir(parent, { recursive: true })
+        const stamp = backupStamp(new Date())
+        let destination = path.join(parent, `寒窗备份-${stamp}`)
+        for (let suffix = 2; fs.existsSync(destination) && suffix < 100; suffix += 1) {
+          destination = path.join(parent, `寒窗备份-${stamp}-${suffix}`)
+        }
+        try {
+          this.options.db.run('PRAGMA wal_checkpoint(TRUNCATE)')
+        } catch {
+          /* WAL 截断失败也能继续备份。 */
+        }
+        backupPath = (await this.writeBackup(destination)).path
+      }
+      this.store.clearLibrary(scope)
+      for (const name of ['originals', 'artifacts', 'work']) {
+        purgeDirectory(path.join(this.options.root, name))
+      }
+      try {
+        this.options.db.run('VACUUM')
+        this.options.db.run('PRAGMA wal_checkpoint(TRUNCATE)')
+      } catch {
+        /* 回收失败不影响已经清掉的数据。 */
+      }
+      const afterBytes = this.totalBytes()
+      return ok(requestId, {
+        scope,
+        backupPath,
+        removed: {
+          documents: before.documents,
+          pages: before.pages,
+          sessions: before.sessions,
+          cards: before.manualCards + before.cards,
+          misses: before.misses,
+          courses: scope === 'all' ? coursesBefore : 0,
+        },
+        freedBytes: Math.max(0, beforeBytes - afterBytes),
+      })
+    } catch (error) {
+      return this.asFailure(requestId, error)
+    }
+  }
+
+  /** 库文件（含 WAL）+ 原文 + 页面图 + 解析临时目录的总字节数；清除前后各算一次得出回收量。 */
+  private totalBytes(): number {
+    let total = fileBytes(path.join(this.options.root, 'library.sqlite'))
+    total += fileBytes(path.join(this.options.root, 'library.sqlite-wal'))
+    for (const name of ['originals', 'artifacts', 'work']) {
+      total += directoryBytes(path.join(this.options.root, name))
+    }
+    return total
   }
 
   pickBackupDirectory(windowId: string): Promise<Result<PickBackupDirResult>> {
@@ -1852,6 +1918,25 @@ function fileBytes(file: string): number {
 function directoryBytes(dir: string): number {
   return walkDirectory(dir).bytes
 }
+
+/** 只清空目录里的内容，保留目录本身：库还在用这些路径。 */
+function purgeDirectory(dir: string): void {
+  if (!fs.existsSync(dir)) return
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    try {
+      fs.rmSync(full, { recursive: true, force: true })
+    } catch {
+      /* 个别文件被占用就跳过，下一次清除会再处理。 */
+    }
+  }
+}
+
+function countRows(db: { get: (sql: string) => unknown }, table: string): number {
+  const row = db.get(`SELECT COUNT(*) AS total FROM ${table}`) as { total?: number } | undefined
+  return Number(row?.total ?? 0)
+}
+
 
 function pruneAutoBackups(parent: string, keep: number): number {
   let removed = 0

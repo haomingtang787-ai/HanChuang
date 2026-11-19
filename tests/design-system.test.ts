@@ -90,8 +90,9 @@ describe('应用图标资产', () => {
     }
   })
 
-  it('小尺寸图标里暖灯仍是可辨认的实心色块', async () => {
-    // 16px 下拱体底部必须是暖色实心块，而不是被光晕糊掉；直接数像素。
+  it('16px 图标仍是「一扇亮着的窗」，而不是一块色块', async () => {
+    // 上一版只留实心拱，16px 就是一个色块。这版要验三件事：暖色玻璃在、象牙窗框在、
+    // 中间那根竖棂把亮面劈成了两扇窗。直接数像素，不看形状描述。
     const { loadImage, createCanvas } = await import('@napi-rs/canvas')
     const image = await loadImage(path.join(root, 'build/icons/icon-16.png'))
     expect(image.width).toBe(16)
@@ -109,7 +110,18 @@ describe('应用图标资产', () => {
         if (a > 200 && r > 225 && g > 215) ivory += 1
       }
     }
-    expect(warm, '16px 拱底没有可辨认的暖色').toBeGreaterThanOrEqual(6)
-    expect(ivory, '16px 拱体象牙白不够，轮廓会糊').toBeGreaterThanOrEqual(20)
+    expect(warm, '16px 没有可辨认的暖色玻璃').toBeGreaterThanOrEqual(45)
+    expect(ivory, '16px 窗框不够亮，轮廓会糊').toBeGreaterThanOrEqual(14)
+
+    // 竖棂：中间两列要有一串浅色像素，把玻璃分成左右两扇。
+    let muntin = 0
+    for (const x of [7, 8]) {
+      for (let y = 3; y < 13; y += 1) {
+        const at = (y * 16 + x) * 4
+        const [r, g, b, a] = [data[at], data[at + 1], data[at + 2], data[at + 3]]
+        if (a > 200 && r > 190 && g > 170 && b > 120) muntin += 1
+      }
+    }
+    expect(muntin, '16px 看不出竖棂，窗就成了色块').toBeGreaterThanOrEqual(8)
   })
 })

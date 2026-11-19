@@ -13,6 +13,7 @@ import type { AppInfoService } from '../app/info'
 import { openOriginal } from './nativeOpen'
 import { ok, fail, type Result, type SaveTextResult } from '../shared/contract'
 import { IpcChannel, IPC_INVOKE_CHANNELS, type IpcInvokeChannel } from '../shared/ipc'
+import type { ClearDataBody } from '../shared/data'
 import { randomUUID } from 'node:crypto'
 
 export function windowIdFrom(event: IpcMainInvokeEvent): string {
@@ -77,6 +78,7 @@ export function registerIpc(
   bind(IpcChannel.dataAutoBackup, () => service.autoBackup())
   bind(IpcChannel.dataRestoreInspect, (event) => service.inspectRestore(windowIdFrom(event)))
   bind(IpcChannel.dataRestoreApply, (_event, body) => service.applyRestore(body))
+  bind(IpcChannel.dataClear, (_event, body) => service.clearData(body as ClearDataBody))
   bind(IpcChannel.dataSettingsGet, () => service.appSettings())
   bind(IpcChannel.dataSettingsSave, (_event, body) => service.saveAppSettings(body))
   bind(IpcChannel.jobsGet, (_event, body) => service.job(body))

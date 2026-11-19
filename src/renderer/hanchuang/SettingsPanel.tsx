@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { AiConfigView } from '../../shared/ai'
 import type { UpdateCheckResult, UpdateDownloadProgress } from '../../shared/app'
-import type { Result, StorageUsage } from '../../shared/contract'
-import type { AppSettingsView } from '../../shared/data'
+import type { Result, StorageUsage, LibraryStats } from '../../shared/contract'
+import type { AppSettingsView, ClearScope } from '../../shared/data'
 import type { HabitsView } from '../../shared/teaching'
 import type { TeacherMemoryKind, TeacherOverview } from '../../shared/teacher'
 
@@ -42,6 +42,12 @@ export function SettingsPanel(props: Props) {
   const [habits, setHabits] = useState<HabitsView | null>(null)
   const [settings, setSettings] = useState<AppSettingsView | null>(null)
   const [storage, setStorage] = useState<StorageUsage | null>(null)
+  const [stats, setStats] = useState<LibraryStats | null>(null)
+  const [clearOpen, setClearOpen] = useState(false)
+  const [clearScope, setClearScope] = useState<ClearScope>('content')
+  const [clearBackup, setClearBackup] = useState(true)
+  const [clearWord, setClearWord] = useState('')
+  const [clearing, setClearing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [version, setVersion] = useState('')
   const [update, setUpdate] = useState<UpdateCheckResult | null>(null)
@@ -54,8 +60,8 @@ export function SettingsPanel(props: Props) {
     void (async () => {
       if (!api) return
       try {
-        const [ai, overview, habitView, appSettings, storageUsage] = await Promise.all([
-          api.ai.status(), api.teacher.overview(), api.teaching.habits.get(), api.data.settings(), api.data.storage(),
+        const [ai, overview, habitView, appSettings, storageUsage, libraryStats] = await Promise.all([
+          api.ai.status(), api.teacher.overview(), api.teaching.habits.get(), api.data.settings(), api.data.storage(), api.data.stats(),
         ])
         if (!alive) return
         if (ai.ok) {
@@ -81,6 +87,7 @@ export function SettingsPanel(props: Props) {
         if (habitView.ok) setHabits(habitView.data)
         if (appSettings.ok) setSettings(appSettings.data)
         if (storageUsage.ok) setStorage(storageUsage.data)
+        if (libraryStats.ok) setStats(libraryStats.data)
       } catch (error) {
         props.notify('bad', error instanceof Error ? error.message : '设置加载失败')
       }
@@ -102,6 +109,22 @@ export function SettingsPanel(props: Props) {
     return () => { off() }
   }, [api])
 
+  useEffect(() => {
+    if (!api || !clearOpen) return
+    let alive = true
+    void (async () => {
+      try {
+        const [usage, counts] = await Promise.all([api.data.storage(), api.data.stats()])
+        if (!alive) return
+        if (usage.ok) setStorage(usage.data)
+        if (counts.ok) setStats(counts.data)
+      } catch {
+        /* 数量读不到就不显示，不挡住清除入口 */
+      }
+    })()
+    return () => { alive = false }
+  }, [api, clearOpen])
+
   async function run(action: () => Promise<void>): Promise<void> {
     setBusy(true)
     try {
@@ -114,6 +137,29 @@ export function SettingsPanel(props: Props) {
   }
 
   if (!api) return null
+
+  /** 清除本机数据：默认先备份，成功后重载界面，避免残留内存里的旧课件。 */
+  async function clearNow(): Promise<void> {
+    if (!api) return
+    setClearing(true)
+    try {
+      const result = unwrap(await api.data.clear({ scope: clearScope, backup: clearBackup }))
+      const mb = (result.freedBytes / 1024 / 1024).toFixed(1)
+      const backupName = result.backupPath ? result.backupPath.split(/[\\/]/).pop() : null
+      props.notify(
+        'good',
+        `已清除：课件 ${result.removed.documents} 份 · 页 ${result.removed.pages} · 课堂 ${result.removed.sessions} 讲，释放 ${mb} MB` +
+          (backupName ? `；清前备份 ${backupName}` : ''),
+      )
+      setClearOpen(false)
+      setClearWord('')
+      window.setTimeout(() => window.location.reload(), 800)
+    } catch (error) {
+      props.notify('bad', error instanceof Error ? error.message : '清除失败')
+    } finally {
+      setClearing(false)
+    }
+  }
 
   return (
     <div className="hc-modal-mask" onClick={props.onClose}>
@@ -385,6 +431,86 @@ export function SettingsPanel(props: Props) {
                   unwrap(await api.data.applyRestore({ token: preview.token }))
                   props.notify('good', '恢复完成，正在重启寒窗…')
                 })}>从文件夹恢复…</button>
+              </div>
+
+              <div className="hc-danger-zone">
+                <div className="hc-danger-zone-head">
+                  <span>清除数据</span>
+                  {!clearOpen && (
+                    <button
+                      className="hc-danger"
+                      disabled={busy}
+                      onClick={() => {
+                        setClearOpen(true)
+                        setClearWord('')
+                        // 展开后确认行会落到折叠线下面：直接滚到底，让人一眼看到输入框和按钮
+                        window.setTimeout(() => {
+                          const body = document.querySelector('.hc-modal-body')
+                          if (body) body.scrollTop = body.scrollHeight
+                        }, 60)
+                      }}
+                    >清除本机数据…</button>
+                  )}
+                </div>
+                {!clearOpen && (
+                  <div className="hc-form-note">
+                    课件与页面图删掉就没了，要重新导入；模型设置与 API Key 不动。清之前会自动留一份备份，后悔了能恢复。
+                  </div>
+                )}
+                {clearOpen && (
+                  <div className="hc-danger-panel">
+                    <div className="hc-danger-count">
+                      将删除：课件 {storage?.documents ?? 0} 份 · 页 {storage?.pages ?? 0} · 课堂 {stats?.sessions ?? 0} 讲 ·
+                      复习卡 {(stats?.manualCards ?? 0) + (stats?.cards ?? 0)} 张 · 错题 {stats?.misses ?? 0} 条 ·
+                      占用 {((storage?.totalBytes ?? 0) / 1024 / 1024).toFixed(1)} MB
+                    </div>
+                    <label className="hc-choice">
+                      <input
+                        type="radio"
+                        name="hc-clear-scope"
+                        checked={clearScope === 'content'}
+                        onChange={() => setClearScope('content')}
+                      />
+                      <span>
+                        只清课件与课堂
+                        <em>课程分组、我的习惯、老师人格与记忆都保留</em>
+                      </span>
+                    </label>
+                    <label className="hc-choice">
+                      <input
+                        type="radio"
+                        name="hc-clear-scope"
+                        checked={clearScope === 'all'}
+                        onChange={() => setClearScope('all')}
+                      />
+                      <span>
+                        全部清空
+                        <em>连课程分组、习惯、老师记忆一起清，等于从头开始</em>
+                      </span>
+                    </label>
+                    <label className="hc-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={clearBackup}
+                        onChange={(event) => setClearBackup(event.target.checked)}
+                      />
+                      清除前先自动备份一份（推荐）
+                    </label>
+                    <div className="hc-danger-confirm">
+                      <input
+                        value={clearWord}
+                        placeholder="输入「清除」两个字确认"
+                        onChange={(event) => setClearWord(event.target.value)}
+                      />
+                      <button
+                        className="hc-danger"
+                        disabled={clearing || clearWord.trim() !== '清除'}
+                        onClick={() => void clearNow()}
+                      >{clearing ? '正在清除…' : '确认清除'}</button>
+                      <button disabled={clearing} onClick={() => { setClearOpen(false); setClearWord('') }}>取消</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

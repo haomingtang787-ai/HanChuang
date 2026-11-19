@@ -625,6 +625,51 @@ export class Store {
     }
   }
 
+  /**
+   * 清空本机数据。content 只清课件、页面、课堂与复习产物；all 再加上课程分组、习惯、
+   * 老师人格与记忆。模型设置（含 API Key）存在 settings.json，这个方法碰不到。
+   * 顺序按“子表先删”排，全部在一个事务里；FTS 虚拟表也一起清空。
+   */
+  clearLibrary(scope: 'content' | 'all'): void {
+    const contentTables = [
+      'search_index',
+      'study_messages',
+      'study_checks',
+      'study_units',
+      'study_misses',
+      'study_sessions',
+      'study_artifacts',
+      'lecture_cards',
+      'lecture_quizzes',
+      'lecture_known',
+      'lecture_summaries',
+      'lecture_units',
+      'lectures',
+      'manual_cards',
+      'highlights',
+      'misses',
+      'image_readings',
+      'page_research',
+      'block_readings',
+      'blocks',
+      'pages',
+      'artifacts',
+      'issues',
+      'jobs',
+      'material_digests',
+      'ai_usage',
+      'document_versions',
+      'documents',
+    ]
+    const profileTables = ['habits', 'day_marks', 'teacher_memory', 'teacher_notes', 'learner_profile', 'teacher_persona', 'study_courses']
+    this.db.transaction(() => {
+      for (const table of contentTables) this.db.run(`DELETE FROM ${table}`)
+      if (scope === 'all') {
+        for (const table of profileTables) this.db.run(`DELETE FROM ${table}`)
+      }
+    })
+  }
+
   listDocuments(offset: number, limit: number): ListJoinRow[] {
     return this.db.all<ListJoinRow>(
       `SELECT d.id AS document_id, d.display_name, d.created_at,

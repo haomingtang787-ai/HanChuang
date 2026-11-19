@@ -72,3 +72,28 @@ export type AutoBackupResult = {
 }
 
 export type PickBackupDirResult = { path: string | null }
+
+/** 清除数据的范围：content 只清课件与课堂；all 连课程、习惯与老师记忆一起清。设置（含 API Key）永远保留。 */
+export type ClearScope = 'content' | 'all'
+
+export type ClearDataBody = {
+  scope: ClearScope
+  /** 默认 true：清之前先自动写一份备份到库旁边的 backups 目录。 */
+  backup?: boolean
+}
+
+export type ClearDataResult = {
+  scope: ClearScope
+  /** 清之前写的备份路径；没备份则为 null。 */
+  backupPath: string | null
+  removed: {
+    documents: number
+    pages: number
+    sessions: number
+    cards: number
+    misses: number
+    courses: number
+  }
+  freedBytes: number
+}
+

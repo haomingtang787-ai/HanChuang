@@ -60,6 +60,8 @@ const desk = {
     autoBackup: () => invoke<import('../shared/data').AutoBackupResult>(IpcChannel.dataAutoBackup, {}),
     inspectRestore: () => invoke<import('../shared/data').RestorePreview>(IpcChannel.dataRestoreInspect, {}),
     applyRestore: (body: { token: string }) => invoke<import('../shared/data').RestoreApplied>(IpcChannel.dataRestoreApply, body),
+    clear: (body: import('../shared/data').ClearDataBody) =>
+      invoke<import('../shared/data').ClearDataResult>(IpcChannel.dataClear, body),
     settings: () => invoke<import('../shared/data').AppSettingsView>(IpcChannel.dataSettingsGet, {}),
     saveSettings: (body: import('../shared/data').SaveAppSettingsBody) =>
       invoke<import('../shared/data').AppSettingsView>(IpcChannel.dataSettingsSave, body),
