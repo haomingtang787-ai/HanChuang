@@ -70,6 +70,25 @@ describe('讲解深度', () => {
     expect(prompt.system).toContain('小例子')
   })
 
+  test('学生说没看懂要拓展时，允许讲课件外知识，不把老师锁在幻灯片里', () => {
+    const prompt = buildStudyChatPrompt({
+      overview: '总览',
+      outline: ['第一讲'],
+      units: [unit],
+      unit,
+      messages: [],
+      question: '我还是没看懂，能不能拓展讲解一下ALU',
+      habits,
+    })
+    expect(prompt.system).toContain('课件是这节课的主线，不是知识的天花板')
+    expect(prompt.system).toContain('课件里没展开，我补一段')
+    expect(prompt.system).toContain('不要因为课件没写就不讲')
+    expect(prompt.system).not.toContain('如果课件不足以回答，明确说出来')
+    expect(prompt.user).toContain('不是要你再念一遍课件')
+    expect(prompt.user).toContain('至少给一个课件里没有的具体例子')
+    expect(prompt.user).toContain('结尾不要再出题')
+  })
+
   test('学生点名第 39 页时，把整页原文塞进提示词，不许说手上没有', () => {
     const prompt = buildStudyChatPrompt({
       overview: '总览',
