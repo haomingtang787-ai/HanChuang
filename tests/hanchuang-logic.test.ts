@@ -26,6 +26,7 @@ function detail(units: StudyUnit[]): StudySessionDetail {
     title: '测试课',
     subject: '数学',
     sourceName: '测试.pdf',
+    layout: 'lecture',
     unitCount: units.length,
     messageCount: 0,
     status: 'ready',

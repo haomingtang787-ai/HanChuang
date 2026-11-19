@@ -162,6 +162,84 @@ export function parsePagePlan(raw: string, options: { maxUnits: number }): PageP
   return { units, skipped }
 }
 
+export type ContinuousSectionDraft = {
+  pages: number[]
+  title: string
+  source: string
+  minutes: number
+  keyPoints: string[]
+  segments: StudySegment[]
+}
+
+/** 连续讲的模型输出：sections 必须按顺序覆盖这一批的每一页，漏页/重复页都算不合格。 */
+export function parseContinuousPlan(
+  raw: string,
+  options: { allowedPages: number[]; maxSections: number },
+): ContinuousSectionDraft[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(unwrap(raw))
+  } catch (error) {
+    if (error instanceof ArgumentError) throw error
+    throw new ArgumentError('模型返回的连续讲稿不是 JSON 格式。')
+  }
+  const root = record(parsed)
+  const rawSections = list(root.sections)
+  if (rawSections.length === 0) throw new ArgumentError('这一批没有拆出任何一段。')
+  if (rawSections.length > options.maxSections) {
+    throw new ArgumentError(`这一批拆出 ${rawSections.length} 段，超过本批页数上限 ${options.maxSections} 段。`)
+  }
+  const allowed = new Set(options.allowedPages)
+  const seen = new Set<number>()
+  let previousLast = -1
+  const sections = rawSections.map((item, index) => {
+    const row = record(item)
+    const pages = list(row.pages)
+      .map((page) => (typeof page === 'number' ? page : Number(page)))
+      .filter((page) => Number.isInteger(page))
+    if (pages.length === 0) throw new ArgumentError(`第 ${index + 1} 段没有写覆盖哪几页。`)
+    if (pages.length > 5) throw new ArgumentError(`第 ${index + 1} 段一口气写了 ${pages.length} 页；一段最多 5 页。`)
+    pages.forEach((page) => {
+      if (!allowed.has(page)) throw new ArgumentError(`第 ${index + 1} 段写了不属于这一批的第 ${page} 页。`)
+      if (seen.has(page)) throw new ArgumentError(`第 ${page} 页被两段重复讲了。`)
+      seen.add(page)
+    })
+    for (let i = 1; i < pages.length; i += 1) {
+      if (pages[i] !== pages[i - 1] + 1) throw new ArgumentError(`第 ${index + 1} 段的页码不连续。`)
+    }
+    if (pages[0] <= previousLast) throw new ArgumentError('段落顺序乱了：后面的段不能讲回前面的页。')
+    previousLast = pages[pages.length - 1]
+    const rawTitle = text(row.title, `第 ${pages[0]} 页`)
+    // 模型有时把页区间写进标题；课堂头部已经显示页区间，这里剥掉，避免「第 1–2 页 · 第 1–2 页：…」。
+    const title = rawTitle
+      .replace(/^第\s*\d+(?:\s*[–-]\s*\d+)?\s*页\s*[：:·\-]?\s*/, '')
+      .trim()
+      .slice(0, 80) || `第 ${pages[0]} 页`
+    const quote = text(row.quote)
+    if (!quote) throw new ArgumentError(`第 ${index + 1} 段缺少从原文逐字复制的一句原文。`)
+    const explain = text(row.explain)
+    if (explain.length < 100) throw new ArgumentError(`第 ${index + 1} 段的讲解只有 ${explain.length} 字，太短，讲不透。`)
+    if (explain.length > 800) throw new ArgumentError(`第 ${index + 1} 段的讲解 ${explain.length} 字，太长，学生听不完。`)
+    const first = pages[0]
+    const last = pages[pages.length - 1]
+    return {
+      pages,
+      title,
+      source: first === last ? `第 ${first} 页` : `第 ${first}–${last} 页`,
+      minutes: clampInt(3 + pages.length * 2, 3, 12, 6),
+      keyPoints: stringList(row.keyPoints).slice(0, 3),
+      // 连续讲不设「停一下」：学生只要点继续，问题留到他自己想问的时候。
+      segments: [{ source: quote, explain, check: '' }],
+    }
+  })
+  const missing = options.allowedPages.filter((page) => !seen.has(page))
+  if (missing.length > 0) {
+    const shown = missing.length > 8 ? `${missing.slice(0, 8).join('、')} 等 ${missing.length}` : missing.join('、')
+    throw new ArgumentError(`漏讲了第 ${shown} 页；这一批每一页都必须出现在一段里。`)
+  }
+  return sections
+}
+
 export function parseDigest(raw: string): DigestDraft {
   let parsed: unknown
   try {

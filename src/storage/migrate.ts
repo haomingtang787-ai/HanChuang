@@ -407,7 +407,7 @@ function backfillSearch(db: AppDatabase): void {
 }
 
 /** 恢复旧备份时用它判断备份 schema 是否比当前应用新。 */
-export const CURRENT_SCHEMA_VERSION = 15
+export const CURRENT_SCHEMA_VERSION = 16
 
 const COST_SCHEMA = `
 CREATE TABLE material_digests (
@@ -711,6 +711,13 @@ export function migrate(db: AppDatabase): void {
       // 1.0.1：课堂题测的错题独立落账，右栏、复习页、重练都读这一份。
       db.exec(STUDY_MISS_SCHEMA)
       db.run('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)', 15, nowIso())
+    })
+  }
+  if (!hasVersion(db, 16)) {
+    db.transaction(() => {
+      // 1.6.0：课堂可以不分讲了，从头到尾按内容一段一段连续讲；老课按原来的分讲界面显示。
+      db.exec("ALTER TABLE study_sessions ADD COLUMN layout TEXT NOT NULL DEFAULT 'lecture'")
+      db.run('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)', 16, nowIso())
     })
   }
 }

@@ -124,7 +124,7 @@ export function Sidebar(props: Props) {
                     >
                       <span className="hc-session-title">{session.title}</span>
                       <span className="hc-session-meta">
-                        {session.status === 'finished' ? '已下课' : `${session.unitCount} 讲`}
+                        {session.status === 'finished' ? '已下课' : `${session.unitCount} ${session.layout === 'continuous' ? '段' : '讲'}`}
                       </span>
                       <span className="hc-row-actions" onClick={(event) => event.stopPropagation()}>
                         <button title="删除这份课件的课堂" onClick={() => props.onDeleteSession(session.sessionId)}>✕</button>

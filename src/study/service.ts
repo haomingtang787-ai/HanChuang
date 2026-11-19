@@ -31,6 +31,7 @@ import type {
   StudyUsage,
   StudyUsageAudit,
   StudyUsageKind,
+  StudyLayout,
 } from '../shared/study'
 import type { AppDatabase } from '../storage/database'
 import { StudyStore, messageFromRow, type StudyArtifactRow, type StudyMessageRow, type StudyMissRow, type StudySessionRow, type StudyUnitRow } from '../storage/studyStore'
@@ -39,6 +40,7 @@ import type { TeacherService } from '../teaching/teacherService'
 import { DEFAULT_HABITS, sanitizeHabits } from '../teaching/habits'
 import { DIRECT_PLAN_CHARS, MAX_MATERIAL_CHARS, digestMaterial, renderDigests } from './digest'
 import { planPagewise } from './pagewise'
+import { planContinuous } from './continuous'
 import { parseQuizGrade, parseStudyPlan, parseStudyQuiz, parseStudySummary, parseTeacherNote, parseTeachback, type StudyPlanDraft } from './parse'
 import {
   buildStudyChatPrompt,
@@ -253,10 +255,10 @@ export class StudyService {
       const client = this.client(usageScope)
       const warnings = [...material.warnings]
       // 长课件不再截断成前 20 万字：先按页分段逐段读懂，再拿结构化理解去拆课。
-      // 逐页拆讲不走这条：它直接按页读原文拆，不需要先花钱做一遍分段理解。
+      // 逐页/连续拆讲不走这条：它们直接按页读原文拆，不需要先花钱做一遍分段理解。
       let digests = ''
       let chunkCount = 1
-      if (input.granularity !== 'page' && material.text.length > DIRECT_PLAN_CHARS) {
+      if (input.granularity !== 'page' && input.granularity !== 'continuous' && material.text.length > DIRECT_PLAN_CHARS) {
         const materialSha = createHash('sha256').update(material.text).digest('hex')
         const cached = this.store.findMaterialDigest(input.documentVersionId, materialSha)
         if (cached) {
@@ -290,7 +292,29 @@ export class StudyService {
         }
       }
       let plan: StudyPlanDraft
-      if (input.granularity === 'page') {
+      let layout: StudyLayout = 'lecture'
+      if (input.granularity === 'continuous') {
+        layout = 'continuous'
+        this.progress({ ...progressBase, phase: 'planning', done: 0, total: 0 })
+        const outcome = await planContinuous(client, {
+          title: input.title || meta.displayName,
+          subject: input.subject || '',
+          material: material.text,
+          habits,
+          onProgress: (done, total) => this.progress({ ...progressBase, phase: 'planning', done, total }),
+        })
+        warnings.push(...outcome.warnings)
+        if (outcome.units.length === 0) throw new ArgumentError('连续讲没有产出任何一段，换一份课件试试。')
+        const pageTotal = new Set(outcome.coveredPages).size
+        plan = {
+          title: input.title || meta.displayName,
+          subject: input.subject || '',
+          overview: `《${input.title || meta.displayName}》不分讲、不按页切，从头到尾连续讲：老师按内容把 ${pageTotal} 页并成 ${outcome.units.length} 段，一段一段往下讲，讲完一段点继续。`,
+          opening: '我们从第一页开始，按内容一段一段往下讲；每讲完一段我停一下，你说继续，我就接着讲下一段，直到课件最后一页。',
+          units: outcome.units,
+        }
+      } else if (input.granularity === 'page') {
+        layout = 'page'
         this.progress({ ...progressBase, phase: 'planning', done: 0, total: 0 })
         const pageOutcome = await planPagewise(client, {
           title: input.title || meta.displayName,
@@ -359,7 +383,7 @@ export class StudyService {
       if (grounded.ungrounded > 0) {
         warnings.push(`有 ${grounded.ungrounded} 处讲稿引用的「原文」没能在课件里逐字找到，已保留讲解，但那一句是模型转述，请对照原件。`)
       }
-      const opening = mergeOpening(plan.opening, units)
+      const opening = mergeOpening(plan.opening, units, layout)
       const courseId = this.resolveCourse(input.courseId, plan.subject)
       const session: StudySessionRow = {
         id: sessionId,
@@ -379,6 +403,7 @@ export class StudyService {
         status: 'ready',
         summary_json: '',
         teacher_snapshot_json: this.options.teacher ? JSON.stringify(this.options.teacher.snapshot()) : '',
+        layout,
         created_at: timestamp,
         updated_at: timestamp,
       }
@@ -951,7 +976,8 @@ export class StudyService {
     let visionDone = 0
     if (visionTotal > 0) this.progress({ documentVersionId: versionId, phase: 'vision', done: 0, total: visionTotal })
     const pageResults = await mapLimit(pages, 4, async (page) => {
-      const label = `【第 ${page.ordinal + 1} 页${page.source_kind === 'slide' ? ' / 幻灯片' : ''}】`
+      // 页序号入库时是 1 起的（第 1 页 = ordinal 1），这里直接用 ordinal，不能再 +1。
+      const label = `【第 ${page.ordinal} 页${page.source_kind === 'slide' ? ' / 幻灯片' : ''}】`
       const pageBlocks = byPage.get(page.id) ?? []
       const pageWarnings: string[] = []
       const pieces: string[] = []
@@ -978,7 +1004,7 @@ export class StudyService {
             if (ocr.ok) {
               reading = { ...(reading ?? { vision: '', ocr: '' }), ocr: ocr.data.reading.text.trim() }
             } else {
-              pageWarnings.push(`第 ${page.ordinal + 1} 页有图片，但读图没有成功：${result.error.message}`)
+              pageWarnings.push(`第 ${page.ordinal} 页有图片，但读图没有成功：${result.error.message}`)
             }
           }
         }
@@ -991,8 +1017,11 @@ export class StudyService {
       }
       const merged = pieces.join('\n').trim()
       if (merged) return { text: `${label}\n${merged}`, warnings: pageWarnings }
-      pageWarnings.push(`第 ${page.ordinal + 1} 页没有可用的内容。`)
-      return { text: '', warnings: pageWarnings }
+      // 封面、空白页、读图失败的页也不能从课堂里消失：留一个占位，连续讲会把它讲成「这页是什么」。
+      const placeholder = page.source_kind === 'image'
+        ? '（这一页是整页图片，读图没有返回可用文字；按原页图讲。）'
+        : '（这一页没有可提取的文字，可能是封面、空白页或纯图页；按原页讲。）'
+      return { text: `${label}\n${placeholder}`, warnings: pageWarnings }
     })
     for (const result of pageResults) {
       if (result.text) parts.push(result.text)
@@ -1262,6 +1291,7 @@ export class StudyService {
       title: session.title,
       subject: session.subject,
       sourceName: session.source_name,
+      layout: session.layout === 'continuous' || session.layout === 'page' ? session.layout : 'lecture',
       unitCount: units.length,
       messageCount: messages.length,
       status: session.status,
@@ -1450,7 +1480,7 @@ export class StudyService {
     title: string
     subject: string
     courseId: string | null
-    granularity: 'overview' | 'page'
+    granularity: 'overview' | 'page' | 'continuous'
   } {
     if (!isPlainObject(body)) throw new ArgumentError('请求格式不正确。')
     const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : ''
@@ -1462,8 +1492,8 @@ export class StudyService {
     const rawCourseId = typeof body.courseId === 'string' ? body.courseId.trim() : ''
     if (rawCourseId && !isUuid(rawCourseId)) throw new ArgumentError('courseId 不是有效的课程。')
     const rawGranularity = body.granularity
-    if (rawGranularity != null && rawGranularity !== 'overview' && rawGranularity !== 'page') {
-      throw new ArgumentError('granularity 只能是 overview 或 page。')
+    if (rawGranularity != null && rawGranularity !== 'overview' && rawGranularity !== 'page' && rawGranularity !== 'continuous') {
+      throw new ArgumentError('granularity 只能是 overview、page 或 continuous。')
     }
     return {
       requestId,
@@ -1471,7 +1501,7 @@ export class StudyService {
       title,
       subject,
       courseId: rawCourseId || null,
-      granularity: rawGranularity === 'page' ? 'page' : 'overview',
+      granularity: rawGranularity === 'page' ? 'page' : rawGranularity === 'continuous' ? 'continuous' : 'overview',
     }
   }
 

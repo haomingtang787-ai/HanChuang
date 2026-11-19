@@ -24,7 +24,8 @@ export function Composer(props: Props) {
   const [text, setText] = useState('')
   const finished = detail.status === 'finished'
   const total = totalSegments(detail.units)
-  const label = primaryLabel(revealed.length, total)
+  const continuous = detail.layout === 'continuous'
+  const label = primaryLabel(revealed.length, total, detail.layout)
   const disabled = busy !== null || finished
   // 模型只认接口拉回来的那份：不要塞 deepseek-chat 这类写死的名字，配置换了会显示错。
   const options = Array.from(new Set([ai?.model ?? '', ...models].filter((item) => item !== '')))
@@ -61,21 +62,27 @@ export function Composer(props: Props) {
         <button
           className="hc-expand"
           disabled={disabled || total === 0}
-          title="把这一讲从导览展开成细讲：先讲理解门槛，再讲易错处，补一个具体例子"
+          title={continuous
+            ? '把这一段展开成细讲：先讲理解门槛，再讲易错处，补一个具体例子'
+            : '把这一讲从导览展开成细讲：先讲理解门槛，再讲易错处，补一个具体例子'}
           onClick={props.onExpand}
         >
-          详细讲这一讲
+          {continuous ? '这段详细讲' : '详细讲这一讲'}
         </button>
         <button disabled={disabled} onClick={() => props.onTool('quiz')}>出题考我</button>
         <button disabled={disabled} onClick={() => props.onTool('outline')}>课件大纲</button>
-        <button disabled={disabled} onClick={() => props.onTool('summary')}>总结这一讲</button>
+        <button disabled={disabled} onClick={() => props.onTool('summary')}>
+          {continuous ? '总结这一课' : '总结这一讲'}
+        </button>
         <button className="hc-danger" disabled={disabled} onClick={props.onFinish}>下课</button>
       </div>
       <div className="hc-input-row">
         <textarea
           rows={2}
           value={text}
-          placeholder="随时插嘴问老师，讲课进度不会丢。例：第 39 页看不懂 / 第 2 讲再来个例子。Enter 发送"
+          placeholder={continuous
+            ? '随时插嘴问老师，讲课进度不会丢。例：第 39 页看不懂 / 这一段再举个例子。Enter 发送'
+            : '随时插嘴问老师，讲课进度不会丢。例：第 39 页看不懂 / 第 2 讲再来个例子。Enter 发送'}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {

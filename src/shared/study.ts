@@ -3,6 +3,9 @@ import type { TeacherNote } from './teacher'
 
 export type StudyStatus = 'ready' | 'finished'
 
+/** 课堂的组织方式：分讲、按页拆，或不分讲、从头到尾一段一段连续讲。 */
+export type StudyLayout = 'lecture' | 'page' | 'continuous'
+
 export type StudySegment = {
   source: string
   explain: string
@@ -217,6 +220,7 @@ export type StudySessionListItem = {
   title: string
   subject: string
   sourceName: string
+  layout: StudyLayout
   unitCount: number
   messageCount: number
   status: StudyStatus

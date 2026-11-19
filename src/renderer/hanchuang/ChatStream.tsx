@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { StudyProgress, StudyQuizAnswer, StudySessionDetail, StudyUnit } from '../../shared/study'
-import { buildTimeline, nextSegment, prepPhaseLabel, type Reveal } from './logic'
+import { buildTimeline, nextSegment, pageRangeOf, prepPhaseLabel, type Reveal } from './logic'
 import { ArtifactCard } from './ArtifactCard'
 import { LectureCard } from './LectureCard'
 import { QuizCard } from './QuizCard'
@@ -29,6 +29,18 @@ export function ChatStream(props: Props) {
   const next = nextSegment(detail.units, revealed)
   const orderedUnits = [...detail.units].sort((a, b) => a.ordinal - b.ordinal)
   const totalDots = detail.units.reduce((sum, unit) => sum + unit.segments.length, 0)
+  const continuous = detail.layout === 'continuous'
+  const nextUnit = next ? orderedUnits[next.unitOrdinal] : null
+  const nextRange = nextUnit ? pageRangeOf(nextUnit.source) : null
+  const lastUnit = orderedUnits[orderedUnits.length - 1]
+  const totalPages = lastUnit ? pageRangeOf(lastUnit.source)?.end ?? 0 : 0
+  const coveredPages = !next ? totalPages : Math.max(0, (nextRange?.start ?? 1) - 1)
+  const pageLabel = next
+    ? nextRange
+      ? nextRange.start === nextRange.end ? `第 ${nextRange.start} 页` : `第 ${nextRange.start}–${nextRange.end} 页`
+      : nextUnit?.source ?? ''
+    : `已讲完 · 共 ${totalPages} 页`
+  const pagePercent = totalPages > 0 ? Math.round((coveredPages / totalPages) * 100) : 0
 
   useEffect(() => {
     const node = containerRef.current
@@ -47,7 +59,17 @@ export function ChatStream(props: Props) {
       <div className="hc-stream-inner">
         {orderedUnits.length > 0 && (
           <div className="hc-rail" aria-label="讲课进度">
-            {orderedUnits.length > 10 ? (
+            {continuous ? (
+              <>
+                <div className="hc-rail-unit current" title={nextUnit?.source ?? ''}>
+                  <span className="hc-rail-name">{pageLabel}</span>
+                </div>
+                <div className="hc-rail-summary">{nextUnit?.title ?? '课件已经讲完了'}</div>
+                <div className="hc-rail-progress" role="progressbar" aria-valuenow={pagePercent} aria-valuemin={0} aria-valuemax={100}>
+                  <span style={{ width: `${pagePercent}%` }} />
+                </div>
+              </>
+            ) : orderedUnits.length > 10 ? (
               <>
                 <div className="hc-rail-unit current" title={next ? orderedUnits[next.unitOrdinal]?.title : '这一讲已讲完'}>
                   <span className="hc-rail-name">
@@ -121,6 +143,7 @@ export function ChatStream(props: Props) {
                 unit={unit}
                 segmentIndex={item.reveal.segmentIndex}
                 check={check}
+                layout={detail.layout}
                 busy={busy !== null}
                 onAnswer={props.onAnswerCheck}
                 onExplainDetail={props.onExplainDetail}

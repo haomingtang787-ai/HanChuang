@@ -1,6 +1,6 @@
 import type { Habits } from '../teaching/habits'
 import { habitBrief } from '../teaching/habits'
-import type { StudyCheck, StudyMessage, StudySkill, StudySlideBrief, StudySummary, StudyUnit } from '../shared/study'
+import type { StudyCheck, StudyLayout, StudyMessage, StudySkill, StudySlideBrief, StudySummary, StudyUnit } from '../shared/study'
 import type { TeacherPromptContext } from '../shared/teacher'
 import { studySkillBrief } from './tools'
 
@@ -387,11 +387,19 @@ export function buildStudyTeachbackPrompt(input: {
   }
 }
 
-export function mergeOpening(opening: string, units: StudyUnit[]): string {
+export function mergeOpening(opening: string, units: StudyUnit[], layout: StudyLayout = 'lecture'): string {
   const first = units[0]
-  if (!opening.trim()) return first ? `我们从第 1 讲《${first.title}》开始。` : '我们开始。'
+  const head = layout === 'continuous' || layout === 'page'
+    ? first
+      ? `我们从${first.source}${first.title ? `《${first.title}》` : ''}开始。`
+      : '我们开始。'
+    : first
+      ? `我们从第 1 讲《${first.title}》开始。`
+      : '我们开始。'
+  if (!opening.trim()) return head
   if (!first) return opening
-  return `${opening.trim()}\n\n我们从第 1 讲《${first.title}》开始。`
+  // 连续讲/按页拆里不再出现「第几讲」：开场只报到第几页。
+  return `${opening.trim()}\n\n${head}`
 }
 
 export function emptySummary(): StudySummary {

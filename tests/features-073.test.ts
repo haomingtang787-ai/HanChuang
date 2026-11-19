@@ -146,7 +146,7 @@ afterEach(() => {
 
 describe('0.7.3 schema 与课程分组', () => {
   it('schema 升到 15，课程、课件归属、消息引用和错题账本都有表', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(15)
+    expect(CURRENT_SCHEMA_VERSION).toBe(16)
     const courseColumns = db.all<{ name: string }>('PRAGMA table_info(study_courses)').map((row) => row.name)
     expect(courseColumns).toContain('sort_order')
     const sessionColumns = db.all<{ name: string }>('PRAGMA table_info(study_sessions)').map((row) => row.name)

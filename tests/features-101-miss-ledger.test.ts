@@ -120,8 +120,8 @@ function service() {
 
 describe('1.0.1 课堂错题账本', () => {
   it('迁移到 schema 15 并创建 study_misses', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(15)
-    expect(db.get<{ version: number }>('SELECT MAX(version) AS version FROM schema_migrations')?.version).toBe(15)
+    expect(CURRENT_SCHEMA_VERSION).toBe(16)
+    expect(db.get<{ version: number }>('SELECT MAX(version) AS version FROM schema_migrations')?.version).toBe(16)
     expect(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='study_misses'")?.name).toBe('study_misses')
   })
 
@@ -129,7 +129,7 @@ describe('1.0.1 课堂错题账本', () => {
     db.exec('DROP TABLE study_misses')
     db.run('DELETE FROM schema_migrations WHERE version = 15')
     migrate(db)
-    expect(db.get<{ version: number }>('SELECT MAX(version) AS version FROM schema_migrations')?.version).toBe(15)
+    expect(db.get<{ version: number }>('SELECT MAX(version) AS version FROM schema_migrations')?.version).toBe(16)
     expect(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='misses'")?.name).toBe('misses')
     expect(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='study_misses'")?.name).toBe('study_misses')
   })

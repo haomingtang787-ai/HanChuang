@@ -196,9 +196,11 @@ export function HanchuangApp() {
       const tokens = `${Math.round(est.tokensLow / 1000)}k–${Math.round(est.tokensHigh / 1000)}k tokens`
       const money = formatYuanRange(est.yuanLow, est.yuanHigh)
       const size = est.pages > 0 ? `${est.pages} 页` : `${Math.max(1, info.data.blockCount)} 段原文`
-      const modeLine = prepMode === 'page'
-        ? `按页拆：每页至少一讲，约 ${Math.max(1, est.pages || info.data.blockCount)} 讲；备课调用比导览多，费用会比上面的估价更高。`
-        : '按主干拆：合并成 1–4 讲，先搭框架。'
+      const modeLine = prepMode === 'continuous'
+        ? `连续讲：不分讲，老师按内容把 ${est.pages > 0 ? est.pages : '这些'} 页并成若干段，一段一段往下讲（约 ${Math.max(3, Math.ceil((est.pages || info.data.blockCount) / 3))} 段）；备课调用比导览多，费用会比上面的估价更高。`
+        : prepMode === 'page'
+          ? `按页拆：每页至少一讲，约 ${Math.max(1, est.pages || info.data.blockCount)} 讲；备课调用比导览多，费用会比上面的估价更高。`
+          : '按主干拆：合并成 1–4 讲，先搭框架。'
       const confirmed = window.confirm(
         `《${meta.name}》共 ${size}，备课一次预计 ${tokens}（${money}${est.readsImages ? '，含读图' : ''}）。\n`
         + `${modeLine}\n`
@@ -232,7 +234,9 @@ export function HanchuangApp() {
     await refreshCourses()
     setBusy(null)
     setProgress(null)
-    notify('good', `老师备好了 ${result.data.units.length} 讲，点「开始上课」`)
+    notify('good', result.data.layout === 'continuous'
+      ? `老师备好了 ${result.data.units.length} 段，点「开始上课」，之后点继续就往下讲`
+      : `老师备好了 ${result.data.units.length} 讲，点「开始上课」`)
   }, [api, applyDetail, notify, openSession, refreshCourses])
 
   const drainCreate = useCallback(async () => {

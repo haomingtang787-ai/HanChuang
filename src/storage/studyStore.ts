@@ -9,6 +9,7 @@ import type {
   StudySlideCitation,
   StudyStatus,
   StudySummary,
+  StudyLayout,
 } from '../shared/study'
 
 export type StudySessionRow = {
@@ -29,6 +30,7 @@ export type StudySessionRow = {
   status: StudyStatus
   summary_json: string
   teacher_snapshot_json: string
+  layout: StudyLayout
   created_at: string
   updated_at: string
 }
@@ -140,8 +142,8 @@ export class StudyStore {
         `INSERT INTO study_sessions(
           id, request_id, document_version_id, course_id, title, subject, source_name, overview, outline_json,
           habits_json, warnings_json, truncated, material_chars, material_chunks, status, summary_json,
-          teacher_snapshot_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          teacher_snapshot_json, layout, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         bundle.session.id,
         bundle.session.request_id,
         bundle.session.document_version_id,
@@ -159,6 +161,7 @@ export class StudyStore {
         bundle.session.status,
         bundle.session.summary_json,
         bundle.session.teacher_snapshot_json,
+        bundle.session.layout,
         bundle.session.created_at,
         bundle.session.updated_at,
       )
@@ -205,6 +208,7 @@ export class StudyStore {
       title: row.title,
       subject: row.subject,
       sourceName: row.source_name,
+      layout: row.layout === 'continuous' || row.layout === 'page' ? row.layout : 'lecture',
       unitCount: Number(row.unit_count),
       messageCount: Number(row.message_count),
       status: row.status,

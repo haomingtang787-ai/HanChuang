@@ -1,4 +1,4 @@
-import type { StudyArtifact, StudyMessage, StudySessionDetail, StudyUnit } from '../../shared/study'
+import type { StudyArtifact, StudyLayout, StudyMessage, StudySessionDetail, StudyUnit } from '../../shared/study'
 import type { SearchHit } from '../../shared/search'
 
 /** 一段已经讲过的课：本地揭示进度，重启后从 localStorage 恢复。 */
@@ -56,11 +56,26 @@ export function formatTokens(value: number): string {
 }
 
 /** 主行动按钮文案：一条路走到黑，学生永远知道下一步点什么。 */
-export function primaryLabel(revealedCount: number, total: number): string {
+export function primaryLabel(revealedCount: number, total: number, layout: StudyLayout = 'lecture'): string {
   if (total === 0) return '这份课件还没有讲稿'
+  if (layout === 'continuous') {
+    if (revealedCount === 0) return '开始上课'
+    if (revealedCount < total) return '继续 · 下一段'
+    return '讲完了 · 总结这一课'
+  }
   if (revealedCount === 0) return '开始上课'
   if (revealedCount < total) return `继续上课 · 第 ${revealedCount + 1}/${total} 段`
   return '讲完了 · 总结这一讲'
+}
+
+/** 从「第 3 页」「第 3–5 页」里取出页码区间；连续讲的顶栏只报页，不报第几讲。 */
+export function pageRangeOf(source: string): { start: number; end: number } | null {
+  const match = /第\s*(\d+)\s*(?:[–-]\s*(\d+)\s*)?页/.exec(source)
+  if (!match) return null
+  const start = Number(match[1])
+  if (!Number.isFinite(start) || start <= 0) return null
+  const end = match[2] ? Number(match[2]) : start
+  return { start, end: Number.isFinite(end) && end >= start ? end : start }
 }
 
 /** DeepSeek 官方牌价（元/百万 tokens，2026-11 核实）：flash 系输入 1 / 缓存命中 0.02 / 输出 2；
@@ -325,27 +340,29 @@ export function saveSidebarOpen(open: boolean): void {
   }
 }
 
-/* ---------- 备课怎么拆：按主干（1–4 讲）还是按页（一页至少一讲） ---------- */
-export type PrepMode = 'overview' | 'page'
+/* ---------- 备课怎么拆：连续讲（默认）、按页拆、按主干（1–4 讲） ---------- */
+export type PrepMode = 'overview' | 'page' | 'continuous'
 
 const PREP_MODE_KEY = 'hc.prepMode.v1'
 
 export function readPrepMode(raw: string | null): PrepMode {
-  // 默认按页拆：没主动选过「按主干」的一律走一页一讲（1.5.0 起）。
-  return raw === 'overview' ? 'overview' : 'page'
+  // 默认连续讲：没主动选过别的，就从头到尾按内容一段一段讲（1.6.0 起）。
+  if (raw === 'overview') return 'overview'
+  if (raw === 'page') return 'page'
+  return 'continuous'
 }
 
 export function loadPrepMode(): PrepMode {
   try {
     return readPrepMode(localStorage.getItem(PREP_MODE_KEY))
   } catch {
-    return 'page'
+    return 'continuous'
   }
 }
 
 export function savePrepMode(mode: PrepMode): void {
   try {
-    localStorage.setItem(PREP_MODE_KEY, mode === 'page' ? 'page' : 'overview')
+    localStorage.setItem(PREP_MODE_KEY, mode)
   } catch {
     // 偏好存不下只影响下次默认值
   }

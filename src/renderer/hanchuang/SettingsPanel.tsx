@@ -331,18 +331,23 @@ export function SettingsPanel(props: Props) {
               <select
                 value={prepMode}
                 onChange={(event) => {
-                  const next: PrepMode = event.target.value === 'page' ? 'page' : 'overview'
+                  const next: PrepMode = event.target.value === 'page'
+                    ? 'page'
+                    : event.target.value === 'overview' ? 'overview' : 'continuous'
                   setPrepMode(next)
                   savePrepMode(next)
                 }}
               >
-                <option value="page">按页拆（一页至少一讲，一点一点讲）</option>
+                <option value="continuous">按内容连续讲（默认：从头到尾一段一段讲）</option>
+                <option value="page">按页拆（一页至少一讲）</option>
                 <option value="overview">按主干拆（1–4 讲，先搭框架）</option>
               </select>
               <div className="hc-form-note">
-                {prepMode === 'page'
-                  ? '按页拆：每页单独备课、单独上课，页数多时讲数就是页数量级，备课费用和时间会更高；封面、目录、致谢这类页会自动跳过。'
-                  : '按主干拆：整份材料合并成 1–4 讲，先搭主干，细节留到你追问。'}
+                {prepMode === 'continuous'
+                  ? '连续讲：不分讲，也不按页切；老师自己判断哪几页属于同一件事，并成一段讲一段话，你点「继续」就接着讲下一段，直到最后一页。每一页都会讲到，不会漏页。'
+                  : prepMode === 'page'
+                    ? '按页拆：每页单独备课、单独上课，页数多时讲数就是页数量级，备课费用和时间会更高；封面、目录、致谢这类页会自动跳过。'
+                    : '按主干拆：整份材料合并成 1–4 讲，先搭主干，细节留到你追问。'}
               </div>
               <label>怎么称呼你</label>
               <input value={habits.name} maxLength={16} onChange={(event) => setHabits({ ...habits, name: event.target.value })} />

@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import type { StudyCheck, StudyUnit } from '../../shared/study'
+import type { StudyCheck, StudyLayout, StudyUnit } from '../../shared/study'
 import { RichText } from './RichText'
 
 type Props = {
   unit: StudyUnit
   segmentIndex: number
   check: StudyCheck | null
+  layout?: StudyLayout
   busy: boolean
   onAnswer: (unitOrdinal: number, segmentIndex: number, answer: string) => void
   onExplainDetail: (unit: StudyUnit, segmentIndex: number) => void
@@ -13,15 +14,18 @@ type Props = {
 }
 
 /** 讲课卡片：原文 → 老师讲解 → 两个工具（详细讲 / 对照原文） → 停一下的问题。 */
-export function LectureCard({ unit, segmentIndex, check, busy, onAnswer, onExplainDetail, onPreview }: Props) {
+export function LectureCard({ unit, segmentIndex, check, layout = 'lecture', busy, onAnswer, onExplainDetail, onPreview }: Props) {
   const [answer, setAnswer] = useState('')
   const segment = unit.segments[segmentIndex]
   if (!segment) return null
+  const continuous = layout === 'continuous'
   return (
     <div className="hc-lecture">
       <div className="hc-lecture-head">
-        <span className="hc-lecture-unit">第 {unit.ordinal + 1} 讲 · {unit.title}</span>
-        <span className="hc-lecture-seg">第 {segmentIndex + 1}/{unit.segments.length} 段</span>
+        <span className="hc-lecture-unit">
+          {continuous ? `${unit.source}${unit.title ? ` · ${unit.title}` : ''}` : `第 ${unit.ordinal + 1} 讲 · ${unit.title}`}
+        </span>
+        {!continuous && <span className="hc-lecture-seg">第 {segmentIndex + 1}/{unit.segments.length} 段</span>}
       </div>
       <blockquote className="hc-source">{segment.source}</blockquote>
       <RichText text={segment.explain} />
