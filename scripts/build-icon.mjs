@@ -1,28 +1,31 @@
-// 「寒窗」应用图标 · 夜窗（v2）
-// 上一版只留一块实心拱，缩到 16px 就是一个色块，也读不出「窗」。这一版按
-// 苹果 2025 的图标语言重做：分层（夜墙 / 亮着的窗 / 窗台）、光从屋里透出来、
-// 圆角粗线代替细描边。构件只剩四样——拱、窗棂、窗台、暖光，每一样都在
-// 小尺寸里承担识别：拱给轮廓，窗棂把色块劈成两扇窗，窗台把「窗」和「碑」分开。
+// 「寒窗」应用图标 · 纸底墨字（v4）
+// 参照用户桌面上的两枚图标重做：诗窗（深底 + 一个奶白汉字 + 一圈细内框）、
+// DeepSeek Harness（近白底 + 一整块深色剪影）。共同语言是：两种颜色、一整块形、
+// 大留白、没有细碎线条。
+//
+// 于是弃掉窗的图案，改成印章（白文印）：一张宣纸色的方块上，一枚墨绿的「寒」。
+// 汉字本身就是那一扇窗——不需要再画窗框窗棂，也不会在三十二像素里糊成一团；
+// 纸色方块在深色任务栏上又有实体感，不会像墨底那样只剩一枚浮着的字。
+// 字形来自 Noto Serif SC（OFL），由 scripts/extract-brand-glyph.py 抽成路径，
+// 与界面里的品牌印记共用同一份轮廓，不依赖运行环境装没装这枚字体。
+//
 // 改形状后重跑 `node scripts/build-icon.mjs`，再看 build/icons/preview.png。
 // 产物：build/icon.ico（多尺寸）、build/icon.png（512）、resources/icon.png（256）、build/icons/*。
-import { createCanvas } from '@napi-rs/canvas'
+import { createCanvas, Path2D } from '@napi-rs/canvas'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const GLYPH = fs.readFileSync(path.join(root, 'assets', 'han-glyph.txt'), 'utf8').trim()
+// 24px 以下换更厚的字重：细笔画在 16px 会散成一堆点，读不出是字
+const GLYPH_BOLD = fs.readFileSync(path.join(root, 'assets', 'han-glyph-bold.txt'), 'utf8').trim()
 
-// 夜色：上端略透、底部压深；一层很淡的顶光让它像玻璃而不是油漆
-const NIGHT_TOP = '#22453A'
-const NIGHT = '#122E25'
-const NIGHT_DEEP = '#06130E'
-// 窗框与窗台：象牙白，越往下越沉一点，避免整块发亮
-const FRAME_TOP = '#F8F2E0'
-const FRAME_BOTTOM = '#E3D3AE'
-// 玻璃里的光：上端奶油，中段琥珀，底部是屋里的暖橙——和象牙框拉开明度差，窗户才立得住
-const GLASS_TOP = '#F7DEAC'
-const GLASS_MID = '#EDB56A'
-const GLASS_BOTTOM = '#C9803A'
+// 纸：宣纸的奶白，上端略亮、下端略沉，像压过的一页纸
+const PAPER_TOP = '#FCF7EA'
+const PAPER_BOTTOM = '#EADFC5'
+// 墨：不是纯黑，是偏绿的墨（和界面里的墨绿同一族）
+const INK = '#16261F'
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath()
@@ -34,169 +37,52 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath()
 }
 
-/** 拱窗：上半是半圆（拱），下半直边，落在 sillY。 */
-function archPath(ctx, left, right, springY, sillY) {
-  const cx = (left + right) / 2
-  const radius = (right - left) / 2
-  ctx.beginPath()
-  ctx.moveTo(left, sillY)
-  ctx.lineTo(left, springY)
-  ctx.arc(cx, springY, radius, Math.PI, 0)
-  ctx.lineTo(right, sillY)
-  ctx.closePath()
-}
-
 /**
- * 每个尺寸一套几何。窗要接近正方形：太瘦就是一块碑，太宽就不像拱窗。
- * 小尺寸不是等比缩小：窗体放大、线加粗，保证 16px 里窗棂两侧各留下 3px 以上的亮面。
+ * 每个尺寸一套微调：小尺寸的字略微放大，保证 16px 里字还占得住画面。
+ * 不画印章内框——参考的两枚图标（鲸鱼剪影、诗窗）都只靠一块形加大量留白，
+ * 双框在圆角方块里会显得像贴纸。
  */
 function geometry(s) {
-  if (s >= 64) {
-    return { l: 0.252, r: 0.748, sy: 0.505, sl: 0.740, t: 0.046, m: 0.042, sill: 0.032, over: 0.028, detail: true, transom: true }
-  }
-  if (s >= 48) {
-    return { l: 0.238, r: 0.762, sy: 0.505, sl: 0.752, t: 0.054, m: 0.05, sill: 0.038, over: 0.03, detail: true, transom: false }
-  }
-  if (s >= 24) {
-    return { l: 0.160, r: 0.840, sy: 0.500, sl: 0.775, t: 0.070, m: 0.068, sill: 0.052, over: 0.038, detail: false, transom: false }
-  }
-  return { l: 0.130, r: 0.870, sy: 0.490, sl: 0.780, t: 0.082, m: 0.082, sill: 0.068, over: 0.044, detail: false, transom: false }
+  if (s >= 48) return { glyph: 1.0, small: false }
+  if (s >= 32) return { glyph: 1.04, small: false }
+  if (s >= 24) return { glyph: 1.1, small: true }
+  return { glyph: 1.14, small: true }
 }
 
 function drawIcon(size) {
-  const canvas = createCanvas(size, size)
-  const ctx = canvas.getContext('2d')
   const s = size
   const g = geometry(s)
   const radius = s * 0.225
-  const left = s * g.l
-  const right = s * g.r
-  const springY = s * g.sy
-  const sillY = s * g.sl
-  const frame = s * g.t
-  const cx = (left + right) / 2
+  const canvas = createCanvas(s, s)
+  const ctx = canvas.getContext('2d')
 
-  // 1) 夜色底：纵向渐变 + 四角压暗 + 顶部一层很淡的反光（玻璃感）
+  // 1) 纸色方块
   const bg = ctx.createLinearGradient(0, 0, 0, s)
-  bg.addColorStop(0, NIGHT_TOP)
-  bg.addColorStop(0.55, NIGHT)
-  bg.addColorStop(1, NIGHT_DEEP)
+  bg.addColorStop(0, PAPER_TOP)
+  bg.addColorStop(1, PAPER_BOTTOM)
   roundRect(ctx, 0, 0, s, s, radius)
   ctx.fillStyle = bg
   ctx.fill()
 
+  if (s >= 48) {
+    // 一道极淡的压边：让纸块在浅色桌面上也有轮廓，不靠投影
+    const inset = Math.max(0.5, s * 0.004)
+    ctx.strokeStyle = 'rgba(18, 32, 25, 0.13)'
+    ctx.lineWidth = Math.max(1, s * 0.006)
+    roundRect(ctx, inset, inset, s - inset * 2, s - inset * 2, radius - inset)
+    ctx.stroke()
+  }
+
+  // 2) 字：一整块实心，不做描边、不加阴影
+  const glyph = new Path2D(g.small ? GLYPH_BOLD : GLYPH)
   ctx.save()
-  roundRect(ctx, 0, 0, s, s, radius)
-  ctx.clip()
-  if (g.detail) {
-    const vignette = ctx.createRadialGradient(cx, s * 0.5, s * 0.2, cx, s * 0.5, s * 0.78)
-    vignette.addColorStop(0, 'rgba(6, 16, 13, 0)')
-    vignette.addColorStop(1, 'rgba(6, 16, 13, 0.34)')
-    ctx.fillStyle = vignette
-    ctx.fillRect(0, 0, s, s)
-  }
-  const sheen = ctx.createLinearGradient(0, 0, 0, s * 0.42)
-  sheen.addColorStop(0, 'rgba(255, 255, 255, 0.09)')
-  sheen.addColorStop(1, 'rgba(255, 255, 255, 0)')
-  ctx.fillStyle = sheen
-  ctx.fillRect(0, 0, s, s * 0.42)
+  const k = (s / 1000) * g.glyph
+  ctx.translate(s / 2, s / 2)
+  ctx.scale(k, k)
+  ctx.translate(-500, -500)
+  ctx.fillStyle = INK
+  ctx.fill(glyph)
   ctx.restore()
-
-  // 2) 光：窗后一圈暖光，贴着窗脚落在夜墙上（只在大尺寸出现）
-  if (g.detail) {
-    ctx.save()
-    roundRect(ctx, 0, 0, s, s, radius)
-    ctx.clip()
-    const halo = ctx.createRadialGradient(cx, sillY - s * 0.05, s * 0.05, cx, sillY - s * 0.05, s * 0.42)
-    halo.addColorStop(0, 'rgba(244, 186, 106, 0.15)')
-    halo.addColorStop(0.55, 'rgba(238, 170, 88, 0.06)')
-    halo.addColorStop(1, 'rgba(238, 170, 88, 0)')
-    ctx.fillStyle = halo
-    ctx.fillRect(0, 0, s, s)
-    ctx.restore()
-  }
-
-  // 3) 窗框：粗一圈象牙白。先带一层内阴影落到夜墙上，窗才像嵌进墙里而不是贴上去。
-  const frameGradient = ctx.createLinearGradient(0, springY - (right - left) / 2, 0, sillY)
-  frameGradient.addColorStop(0, FRAME_TOP)
-  frameGradient.addColorStop(1, FRAME_BOTTOM)
-  ctx.save()
-  if (g.detail) {
-    ctx.shadowColor = 'rgba(3, 10, 7, 0.34)'
-    ctx.shadowBlur = s * 0.05
-  }
-  archPath(ctx, left, right, springY, sillY)
-  ctx.fillStyle = frameGradient
-  ctx.fill()
-  ctx.restore()
-
-  // 4) 玻璃：屋里透出来的暖光，底亮顶柔
-  const glassLeft = left + frame
-  const glassRight = right - frame
-  const glassTop = springY - (right - left) / 2 + frame
-  archPath(ctx, glassLeft, glassRight, springY, sillY)
-  const glass = ctx.createLinearGradient(0, springY - (glassRight - glassLeft) / 2, 0, sillY)
-  glass.addColorStop(0, GLASS_TOP)
-  glass.addColorStop(0.52, GLASS_MID)
-  glass.addColorStop(1, GLASS_BOTTOM)
-  ctx.fillStyle = glass
-  ctx.fill()
-
-  if (g.detail) {
-    // 玻璃顶部一道极淡的内反光，让窗"有厚度"
-    ctx.save()
-    archPath(ctx, glassLeft, glassRight, springY, sillY)
-    ctx.clip()
-    const inner = ctx.createRadialGradient(cx, springY - (glassRight - glassLeft) * 0.1, s * 0.02, cx, springY - (glassRight - glassLeft) * 0.1, (glassRight - glassLeft) * 0.9)
-    inner.addColorStop(0, 'rgba(255, 252, 240, 0.3)')
-    inner.addColorStop(0.6, 'rgba(255, 245, 220, 0)')
-    ctx.fillStyle = inner
-    ctx.fillRect(glassLeft, springY - (glassRight - glassLeft) / 2, glassRight - glassLeft, sillY)
-    // 底部屋里的灯光汇聚处
-    const bloom = ctx.createRadialGradient(cx, sillY - s * 0.02, s * 0.015, cx, sillY - s * 0.02, (glassRight - glassLeft) * 0.6)
-    bloom.addColorStop(0, 'rgba(255, 224, 158, 0.34)')
-    bloom.addColorStop(0.5, 'rgba(244, 183, 101, 0.12)')
-    bloom.addColorStop(1, 'rgba(244, 183, 101, 0)')
-    ctx.fillStyle = bloom
-    ctx.fillRect(cx - (glassRight - glassLeft) * 0.8, sillY - s * 0.12, (glassRight - glassLeft) * 1.6, s * 0.14)
-    // 斜向的明暗：玻璃不是均质发光，左上略亮、右下略沉，才有玻璃的厚度
-    const slant = ctx.createLinearGradient(glassLeft, glassTop, glassRight, sillY)
-    slant.addColorStop(0, 'rgba(255, 250, 232, 0.2)')
-    slant.addColorStop(0.45, 'rgba(255, 250, 232, 0)')
-    slant.addColorStop(1, 'rgba(92, 44, 10, 0.1)')
-    ctx.fillStyle = slant
-    ctx.fillRect(glassLeft, glassTop, glassRight - glassLeft, sillY - glassTop)
-    ctx.restore()
-  }
-
-  // 5) 窗棂：一根竖向立柱，把整块亮面劈成两扇窗（没有它就是一块碑）
-  const muntin = s * g.m
-  const muntinX = cx - muntin / 2
-  ctx.fillStyle = frameGradient
-  ctx.fillRect(muntinX, glassTop, muntin, sillY - glassTop)
-
-  // 横档：只在够大的尺寸出现，把上面两个拱瓣和下面两块窗格分开
-  if (g.transom) {
-    ctx.fillRect(glassLeft, springY - frame * 0.45, glassRight - glassLeft, frame * 0.9)
-  }
-
-  // 6) 窗台：比窗宽出一指的横条，压住窗脚，把「窗」坐实在墙上
-  const sillTop = sillY
-  const sillHeight = s * g.sill
-  const sillLeft = left - s * g.over
-  const sillWidth = right - left + s * g.over * 2
-  roundRect(ctx, sillLeft, sillTop, sillWidth, sillHeight, Math.min(sillHeight * 0.34, s * 0.014))
-  const sillGradient = ctx.createLinearGradient(0, sillTop, 0, sillTop + sillHeight)
-  sillGradient.addColorStop(0, FRAME_TOP)
-  sillGradient.addColorStop(1, FRAME_BOTTOM)
-  ctx.fillStyle = sillGradient
-  ctx.fill()
-
-  // 窗台与窗框之间一道黄铜色的凹槽：老木窗上的那条线，是这枚图标唯一的工艺细节
-  if (g.detail) {
-    ctx.fillStyle = 'rgba(146, 104, 44, 0.34)'
-    ctx.fillRect(sillLeft + sillWidth * 0.02, sillTop - s * 0.006, sillWidth * 0.96, s * 0.008)
-  }
 
   return canvas
 }

@@ -56,12 +56,19 @@ describe('寒窗设计系统', () => {
     expect(css).toContain('prefers-reduced-motion')
   })
 
-  it('品牌印记用新的窗棂图形，不再是红底汉字方块', () => {
+  it('品牌印记用应用图标同一枚字形，不再是手画的窗', () => {
     const app = fs.readFileSync(path.join(root, 'src/renderer/hanchuang/HanchuangApp.tsx'), 'utf8')
     const sidebar = fs.readFileSync(path.join(root, 'src/renderer/hanchuang/Sidebar.tsx'), 'utf8')
+    const mark = fs.readFileSync(path.join(root, 'src/renderer/hanchuang/BrandMark.tsx'), 'utf8')
+    const glyph = fs.readFileSync(path.join(root, 'src/renderer/hanchuang/hanGlyph.ts'), 'utf8')
     expect(app).toContain('BrandMark')
     expect(sidebar).toContain('BrandMark')
     expect(app).not.toContain('<text x="32" y="28"')
+    // 印记必须走字形路径，不能在组件里重新画一套几何
+    expect(mark).toContain('HAN_GLYPH')
+    expect(mark).not.toContain('M16.13 47.36')
+    expect(glyph).toContain('export const HAN_GLYPH')
+    expect(glyph.length).toBeGreaterThan(2000)
   })
 })
 
@@ -90,9 +97,9 @@ describe('应用图标资产', () => {
     }
   })
 
-  it('16px 图标仍是「一扇亮着的窗」，而不是一块色块', async () => {
-    // 上一版只留实心拱，16px 就是一个色块。这版要验三件事：暖色玻璃在、象牙窗框在、
-    // 中间那根竖棂把亮面劈成了两扇窗。直接数像素，不看形状描述。
+  it('16px 图标仍是「一枚墨字盖在纸上」，而不是一块色块', async () => {
+    // 这一版是纸底印章：整块纸色 + 一个米字形的墨迹。16px 要验三件事：
+    // 纸底够满（方块立得住）、墨迹有量（字没散掉）、墨迹落在中间（不是边缘脏点）。
     const { loadImage, createCanvas } = await import('@napi-rs/canvas')
     const image = await loadImage(path.join(root, 'build/icons/icon-16.png'))
     expect(image.width).toBe(16)
@@ -100,28 +107,23 @@ describe('应用图标资产', () => {
     const ctx = canvas.getContext('2d')
     ctx.drawImage(image, 0, 0)
     const { data } = ctx.getImageData(0, 0, 16, 16)
-    let warm = 0
-    let ivory = 0
-    for (let y = 2; y < 14; y += 1) {
-      for (let x = 2; x < 14; x += 1) {
+    let paper = 0
+    let ink = 0
+    let inkMid = 0
+    for (let y = 0; y < 16; y += 1) {
+      for (let x = 0; x < 16; x += 1) {
         const at = (y * 16 + x) * 4
         const [r, g, b, a] = [data[at], data[at + 1], data[at + 2], data[at + 3]]
-        if (a > 200 && r > 170 && g > 100 && b < 160 && r - b > 60) warm += 1
-        if (a > 200 && r > 225 && g > 215) ivory += 1
+        if (a < 200) continue
+        if (r > 220 && g > 205 && b > 175) paper += 1
+        else if (r < 160 && g < 170) {
+          ink += 1
+          if (x >= 5 && x <= 10 && y >= 4 && y <= 11) inkMid += 1
+        }
       }
     }
-    expect(warm, '16px 没有可辨认的暖色玻璃').toBeGreaterThanOrEqual(45)
-    expect(ivory, '16px 窗框不够亮，轮廓会糊').toBeGreaterThanOrEqual(14)
-
-    // 竖棂：中间两列要有一串浅色像素，把玻璃分成左右两扇。
-    let muntin = 0
-    for (const x of [7, 8]) {
-      for (let y = 3; y < 13; y += 1) {
-        const at = (y * 16 + x) * 4
-        const [r, g, b, a] = [data[at], data[at + 1], data[at + 2], data[at + 3]]
-        if (a > 200 && r > 190 && g > 170 && b > 120) muntin += 1
-      }
-    }
-    expect(muntin, '16px 看不出竖棂，窗就成了色块').toBeGreaterThanOrEqual(8)
+    expect(paper, '16px 纸底不够满，方块立不住').toBeGreaterThanOrEqual(120)
+    expect(ink, '16px 墨迹太少，字会散成脏点').toBeGreaterThanOrEqual(24)
+    expect(inkMid, '16px 墨迹不在中央，字偏了').toBeGreaterThanOrEqual(20)
   })
 })
