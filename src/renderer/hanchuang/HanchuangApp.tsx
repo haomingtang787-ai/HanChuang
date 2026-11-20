@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AiConfigView } from '../../shared/ai'
-import type { JobChangedEvent } from '../../shared/contract'
+import type { JobChangedEvent, Result } from '../../shared/contract'
 import type {
   StudyCourseTree, StudyProgress, StudyQuizAnswer, StudySessionDetail, StudySessionListItem, StudyToolKind, StudyUsageAudit,
 } from '../../shared/study'
@@ -16,7 +16,7 @@ import { CODE_EXTENSIONS } from '../../shared/contract'
 import {
   currentUnitOrdinal, dropAsset, estimateCostYuan, estimatePrepCost, formatYuan, formatYuanRange, loadAssets, loadPanePref,
   loadPrepMode, loadSidebarOpen, loadStudyDays, nextSegment, prepPhaseLabel, saveAssets, savePanePref, saveSidebarOpen, streakOf, todayKey,
-  totalSegments, touchStudyDay, upsertAsset,
+  totalSegments, touchStudyDay, upsertAsset, withPendingUserMessage,
   type AssetItem, type PanePref, type Reveal,
 } from './logic'
 
@@ -613,16 +613,29 @@ export function HanchuangApp() {
   async function send(text: string): Promise<void> {
     const current = detailRef.current
     if (!api || !current || busy !== null) return
+    const unitOrdinal = currentUnitOrdinal(current.units, revealedMap[current.sessionId] ?? [])
+    // 先挂上学生自己的话，再等模型；否则整轮回复回来之前聊天流里什么都没有。
+    const previous = current
+    applyDetail(withPendingUserMessage(current, text, unitOrdinal))
     setBusy('send')
-    const result = await api.study.send({
-      sessionId: current.sessionId,
-      content: text,
-      unitOrdinal: currentUnitOrdinal(current.units, revealedMap[current.sessionId] ?? []),
-      mode: 'direct',
-      skill: 'auto',
-    })
+    let result: Result<StudySessionDetail>
+    try {
+      result = await api.study.send({
+        sessionId: current.sessionId,
+        content: text,
+        unitOrdinal,
+        mode: 'direct',
+        skill: 'auto',
+      })
+    } catch (error) {
+      applyDetail(previous)
+      setBusy(null)
+      notify('bad', error instanceof Error ? error.message : '发送失败，请重试。')
+      return
+    }
     setBusy(null)
     if (!result.ok) {
+      applyDetail(previous)
       notify('bad', result.error.message)
       return
     }

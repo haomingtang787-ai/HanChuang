@@ -48,6 +48,28 @@ export function buildTimeline(detail: StudySessionDetail, revealed: Reveal[]): T
   return items
 }
 
+/**
+ * 发送瞬间先把学生自己的话挂进会话，不能让界面等模型整轮返回才显示。
+ * 服务端回复到达后用完整 detail 覆盖，这条临时消息自然被替换成入库消息。
+ */
+export function withPendingUserMessage(
+  detail: StudySessionDetail,
+  content: string,
+  unitOrdinal: number | null,
+  now = new Date(),
+): StudySessionDetail {
+  const message: StudyMessage = {
+    id: `pending-${now.getTime()}`,
+    sessionId: detail.sessionId,
+    role: 'user',
+    unitOrdinal,
+    content,
+    citations: [],
+    createdAt: now.toISOString(),
+  }
+  return { ...detail, messages: [...detail.messages, message] }
+}
+
 export function formatTokens(value: number): string {
   if (!Number.isFinite(value) || value < 0) return '0'
   if (value < 1000) return String(value)

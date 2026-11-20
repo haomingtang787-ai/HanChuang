@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StudySessionDetail, StudyUnit } from '../src/shared/study'
-import { buildTimeline, currentUnitOrdinal, formatTokens, nextSegment, primaryLabel, totalSegments, type Reveal } from '../src/renderer/hanchuang/logic'
+import { buildTimeline, currentUnitOrdinal, formatTokens, nextSegment, primaryLabel, totalSegments, withPendingUserMessage, type Reveal } from '../src/renderer/hanchuang/logic'
 
 function unit(ordinal: number, segments: number): StudyUnit {
   return {
@@ -50,6 +50,26 @@ function detail(units: StudyUnit[]): StudySessionDetail {
 }
 
 describe('寒窗讲课进度逻辑', () => {
+  it('发送瞬间先把学生消息挂到聊天流末尾，不等老师回答', () => {
+    const before = detail([unit(0, 1)])
+    const at = new Date('2026-11-20T00:20:00.000Z')
+    const pending = withPendingUserMessage(before, '第 39 页看不懂', 0, at)
+
+    expect(before.messages).toHaveLength(0)
+    expect(pending.messages).toHaveLength(1)
+    expect(pending.messages[0]).toMatchObject({
+      sessionId: 's1',
+      role: 'user',
+      unitOrdinal: 0,
+      content: '第 39 页看不懂',
+      createdAt: at.toISOString(),
+    })
+    expect(buildTimeline(pending, []).at(-1)).toMatchObject({
+      kind: 'message',
+      message: { content: '第 39 页看不懂' },
+    })
+  })
+
   it('按讲序段序推进，讲完返回 null', () => {
     const units = [unit(0, 2), unit(1, 1)]
     expect(totalSegments(units)).toBe(3)
