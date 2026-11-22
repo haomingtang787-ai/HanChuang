@@ -30,7 +30,10 @@ export function Composer(props: Props) {
   // 模型只认接口拉回来的那份：不要塞 deepseek-chat 这类写死的名字，配置换了会显示错。
   const options = Array.from(new Set([ai?.model ?? '', ...models].filter((item) => item !== '')))
   const usedTokens = detail.usage.promptTokens + detail.usage.completionTokens
-  const costText = formatYuan(estimateCostYuan(ai?.model ?? '', detail.usage.promptTokens, detail.usage.cachedTokens, detail.usage.completionTokens))
+  const costYuan = typeof detail.usage.costYuan === 'number'
+    ? detail.usage.costYuan
+    : estimateCostYuan(ai?.model ?? '', detail.usage.promptTokens, detail.usage.cachedTokens, detail.usage.completionTokens)
+  const costText = formatYuan(costYuan)
 
   function submit(): void {
     const content = text.trim()
@@ -107,7 +110,7 @@ export function Composer(props: Props) {
           <span className="hc-model-static">模型列表未拉到 · 去设置里检查地址和密钥</span>
         )}
         <button className="hc-usage" onClick={props.onUsageClick}>
-          本课 {formatTokens(usedTokens)} tokens · 缓存命中 {formatTokens(detail.usage.cachedTokens)}
+          本课 {formatTokens(usedTokens)} tokens · 缓存命中 {formatTokens(detail.usage.cachedTokens)} · {costText}
         </button>
       </div>
     </div>

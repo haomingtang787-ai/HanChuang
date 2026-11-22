@@ -1328,6 +1328,7 @@ export class StudyService {
         reasoningTokens: 0,
         reportedCalls: 0,
         estimatedCalls: 0,
+        costYuan: 0,
       }
     }
   }
@@ -1364,7 +1365,7 @@ export class StudyService {
         balance,
         balanceError,
         officialNote:
-          'DeepSeek 官方没有逐请求用量查询接口；按 Key 的用量请登录开放平台「用量信息」页，选择月份后点「导出」，解压后看 amount CSV。这里显示的是本机每次调用真实回传的 usage。',
+          'DeepSeek 官方没有逐请求用量查询接口；按 Key 的用量请登录开放平台「用量信息」页，选择月份后点「导出」，解压后看 amount CSV。这里显示的是本机每次调用真实回传的 usage，费用按每次调用的模型与发生时段（闲时/高峰）估算。',
       })
     } catch (error) {
       return this.failure(requestId, error)

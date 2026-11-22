@@ -1,4 +1,5 @@
 import type { AppDatabase } from './database'
+import { estimateCallCostYuan } from '../shared/pricing'
 import type {
   StudyArtifactKind,
   StudyCourse,
@@ -582,6 +583,7 @@ export class StudyStore {
        FROM ai_usage WHERE session_id = ?`,
       sessionId,
     )
+    const costs = this.usageCosts(sessionId)
     return {
       calls: row?.calls ?? 0,
       promptTokens: row?.prompt ?? 0,
@@ -591,11 +593,42 @@ export class StudyStore {
       reasoningTokens: row?.reasoning ?? 0,
       reportedCalls: row?.reported ?? 0,
       estimatedCalls: row?.estimated ?? 0,
+      costYuan: [...costs.values()].reduce((sum, value) => sum + value, 0),
     }
+  }
+
+  /** 每行按自己的模型和发生时间计价：历史调用不能被当前模型价或当前峰谷价覆盖。 */
+  private usageCosts(sessionId: string): Map<string, number> {
+    const rows = this.db.all<{
+      kind: string
+      model: string | null
+      created_at: string
+      prompt_tokens: number
+      cached_tokens: number
+      completion_tokens: number
+    }>(
+      `SELECT kind, model, created_at, prompt_tokens, cached_tokens, completion_tokens
+       FROM ai_usage WHERE session_id = ?`,
+      sessionId,
+    )
+    const costs = new Map<string, number>()
+    for (const row of rows) {
+      const at = new Date(row.created_at)
+      const cost = estimateCallCostYuan(
+        row.model ?? 'deepseek-flash',
+        Number(row.prompt_tokens) || 0,
+        Number(row.cached_tokens) || 0,
+        Number(row.completion_tokens) || 0,
+        Number.isNaN(at.getTime()) ? new Date() : at,
+      )
+      costs.set(row.kind, (costs.get(row.kind) ?? 0) + cost)
+    }
+    return costs
   }
 
   /** 按调用类型拆开，界面上能看清是开课、聊天、总结还是读图花掉的。 */
   usageKinds(sessionId: string): UsageKindTotal[] {
+    const costs = this.usageCosts(sessionId)
     return this.db.all<{
       kind: string
       calls: number
@@ -630,6 +663,7 @@ export class StudyStore {
       reasoningTokens: row.reasoning,
       reportedCalls: row.reported,
       estimatedCalls: row.estimated,
+      costYuan: costs.get(row.kind) ?? 0,
     }))
   }
 }
@@ -669,6 +703,8 @@ export type UsageTotal = {
   reasoningTokens: number
   reportedCalls: number
   estimatedCalls: number
+  /** 按每次调用自己的模型和峰谷时段算出的官方价，单位元。 */
+  costYuan: number
 }
 
 export type UsageKindTotal = UsageTotal & { kind: string }

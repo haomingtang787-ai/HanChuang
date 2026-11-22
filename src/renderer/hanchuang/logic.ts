@@ -1,5 +1,6 @@
 import type { StudyArtifact, StudyLayout, StudyMessage, StudySessionDetail, StudyUnit } from '../../shared/study'
 import type { SearchHit } from '../../shared/search'
+import { estimateCallCostYuan, isPeakTime } from '../../shared/pricing'
 
 /** 一段已经讲过的课：本地揭示进度，重启后从 localStorage 恢复。 */
 export type Reveal = { unitOrdinal: number; segmentIndex: number; at: number }
@@ -100,16 +101,17 @@ export function pageRangeOf(source: string): { start: number; end: number } | nu
   return { start, end: Number.isFinite(end) && end >= start ? end : start }
 }
 
-/** DeepSeek 官方牌价（元/百万 tokens，2026-11 核实）：flash 系输入 1 / 缓存命中 0.02 / 输出 2；
- * pro 系 3 / 0.025 / 6。deepseek-chat 与 reasoner 分别对应 flash 非思考/思考模式，按 flash 计。
- * 闲时半价，这里按牌价估，只会高估不会低估。 */
-export function estimateCostYuan(model: string, promptTokens: number, cachedTokens: number, completionTokens: number): number {
-  const pro = model.includes('pro')
-  const miss = pro ? 3 : 1
-  const hit = pro ? 0.025 : 0.02
-  const out = pro ? 6 : 2
-  const missTokens = Math.max(0, promptTokens - cachedTokens)
-  return (missTokens * miss + Math.max(0, cachedTokens) * hit + Math.max(0, completionTokens) * out) / 1_000_000
+/** DeepSeek 官方牌价（元/百万 tokens，2026-11 核实）：flash 闲时 0.02 / 1 / 4，高峰 0.04 / 2 / 8；
+ * pro 闲时 0.15 / 4.5 / 13.5，高峰 0.3 / 9 / 27。按调用发生时间区分峰谷，历史调用不要用当前价重算。
+ * 具体的价目和北京时间峰谷判断在 shared/pricing.ts，main 进程统计历史用量时共用同一套。 */
+export function estimateCostYuan(
+  model: string,
+  promptTokens: number,
+  cachedTokens: number,
+  completionTokens: number,
+  at: Date = new Date(),
+): number {
+  return estimateCallCostYuan(model, promptTokens, cachedTokens, completionTokens, at)
 }
 
 export function formatYuan(value: number): string {
@@ -265,18 +267,20 @@ export type PrepEstimate = {
   tokensHigh: number
   yuanLow: number
   yuanHigh: number
+  /** 当前时段是否是高峰，界面上说明「闲时/高峰」。 */
+  peak: boolean
 }
 
-/** 混合计价的粗估：约八成输入、两成输出，按 flash 牌价折算。 */
-function yuanOf(tokens: number): number {
-  return (tokens * 0.8 * 1 + tokens * 0.2 * 2) / 1_000_000
+/** 混合计价的粗估：约八成输入、两成输出，按 flash 官方牌价、当前峰谷时段折算。 */
+function yuanOf(tokens: number, at: Date): number {
+  return estimateCallCostYuan('deepseek-flash', Math.round(tokens * 0.8), 0, Math.round(tokens * 0.2), at)
 }
 
 /**
  * 备课一次要花多少：只读本地已有的页数/块数，不调用模型。
  * 依据是实测：82 页 PDF 备 4 讲实际约 4 万 tokens（规划 2.5 万 + 读图 1.6 万）。
  */
-export function estimatePrepCost(format: string, pageCount: number, blockCount: number): PrepEstimate {
+export function estimatePrepCost(format: string, pageCount: number, blockCount: number, at: Date = new Date()): PrepEstimate {
   const pages = Math.max(0, Math.round(pageCount))
   const blocks = Math.max(0, Math.round(blockCount))
   const textTokens = Math.max(1200, Math.max(pages * 220, blocks * 45))
@@ -286,7 +290,15 @@ export function estimatePrepCost(format: string, pageCount: number, blockCount: 
   const base = textTokens + planOutput + visionTokens
   const tokensLow = Math.round(base * 0.85)
   const tokensHigh = Math.round(base * 1.3)
-  return { pages, readsImages, tokensLow, tokensHigh, yuanLow: yuanOf(tokensLow), yuanHigh: yuanOf(tokensHigh) }
+  return {
+    pages,
+    readsImages,
+    tokensLow,
+    tokensHigh,
+    yuanLow: yuanOf(tokensLow, at),
+    yuanHigh: yuanOf(tokensHigh, at),
+    peak: isPeakTime(at),
+  }
 }
 
 /* ---------- 左侧原件面板的偏好（开关 + 占宽比例） ----------

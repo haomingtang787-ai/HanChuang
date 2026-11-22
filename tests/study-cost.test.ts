@@ -10,6 +10,7 @@ import { StudyService } from '../src/study/service'
 import { buildStudyPlanPrompt } from '../src/study/prompt'
 import { buildDigestPrompt, toChunks } from '../src/study/digest'
 import { DEFAULT_HABITS } from '../src/teaching/habits'
+import { estimateCallCostYuan } from '../src/shared/pricing'
 
 const DOC_ID = randomUUID()
 const VERSION_ID = randomUUID()
@@ -160,8 +161,8 @@ describe('开课成本：分段理解复用与 token 用量', () => {
     const finished = await service.finish({ sessionId })
     expect(finished.ok).toBe(true)
 
-    const rows = db.all<{ kind: string; session_id: string | null; prompt_tokens: number; cached_tokens: number }>(
-      'SELECT kind, session_id, prompt_tokens, cached_tokens FROM ai_usage ORDER BY id',
+    const rows = db.all<{ kind: string; session_id: string | null; model: string | null; created_at: string; prompt_tokens: number; cached_tokens: number; completion_tokens: number }>(
+      'SELECT kind, session_id, model, created_at, prompt_tokens, cached_tokens, completion_tokens FROM ai_usage ORDER BY id',
     )
     expect(rows.length).toBeGreaterThan(3)
     expect(rows.some((row) => row.kind === 'digest')).toBe(true)
@@ -177,6 +178,14 @@ describe('开课成本：分段理解复用与 token 用量', () => {
     expect(usage.promptTokens).toBeGreaterThan(0)
     expect(usage.cachedTokens).toBeGreaterThan(0)
     expect(usage.cachedTokens).toBeLessThanOrEqual(usage.promptTokens)
+    const expectedCost = rows.reduce((sum, row) => sum + estimateCallCostYuan(
+      row.model ?? 'deepseek-flash',
+      row.prompt_tokens,
+      row.cached_tokens,
+      row.completion_tokens,
+      new Date(row.created_at),
+    ), 0)
+    expect(usage.costYuan).toBeCloseTo(expectedCost, 8)
   })
 
   it('材料变化后缓存失效，重新分段理解', async () => {

@@ -194,6 +194,8 @@ export type StudyUsage = {
   reportedCalls: number
   /** 供应商没有返回 usage、只能记为 0 的调用数；这些数字不能当真实消耗。 */
   estimatedCalls: number
+  /** 按每次调用的模型与发生时段（闲时/高峰）估出的官方价，单位元。 */
+  costYuan?: number
 }
 
 export type StudyUsageKind = StudyUsage & { kind: string }

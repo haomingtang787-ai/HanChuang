@@ -2,15 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { detectFormat } from '../src/documents/formats'
 import { estimateCostYuan, formatYuan, streakOf } from '../src/renderer/hanchuang/logic'
 
-describe('estimateCostYuan（DeepSeek 2026-11 牌价）', () => {
-  it('flash：1M 未命中输入 + 1M 输出 = 3 元', () => {
-    expect(estimateCostYuan('deepseek-flash', 1_000_000, 0, 1_000_000)).toBeCloseTo(3, 6)
+const OFF_PEAK = new Date('2026-11-22T12:00:00Z') // 北京时间周日 20:00
+const PEAK = new Date('2026-11-23T02:00:00Z') // 北京时间周一 10:00
+
+describe('estimateCostYuan（DeepSeek 2026-11 官方峰谷价）', () => {
+  it('flash 闲时：1M 未命中输入 + 1M 输出 = 5 元', () => {
+    expect(estimateCostYuan('deepseek-flash', 1_000_000, 0, 1_000_000, OFF_PEAK)).toBeCloseTo(5, 6)
   })
-  it('deepseek-chat 按 flash 计：全缓存命中 1M = 0.02 元', () => {
-    expect(estimateCostYuan('deepseek-chat', 1_000_000, 1_000_000, 0)).toBeCloseTo(0.02, 6)
+  it('flash 高峰：1M 未命中输入 + 1M 输出 = 10 元', () => {
+    expect(estimateCostYuan('deepseek-flash', 1_000_000, 0, 1_000_000, PEAK)).toBeCloseTo(10, 6)
   })
-  it('pro：1M 输入 + 1M 输出 = 9 元', () => {
-    expect(estimateCostYuan('deepseek-v4-pro', 1_000_000, 0, 1_000_000)).toBeCloseTo(9, 6)
+  it('flash 全缓存命中 1M：闲时 0.02，高峰 0.04', () => {
+    expect(estimateCostYuan('deepseek-chat', 1_000_000, 1_000_000, 0, OFF_PEAK)).toBeCloseTo(0.02, 6)
+    expect(estimateCostYuan('deepseek-chat', 1_000_000, 1_000_000, 0, PEAK)).toBeCloseTo(0.04, 6)
+  })
+  it('pro 闲时 1M 未命中输入 + 1M 输出 = 18 元，高峰 = 36 元', () => {
+    expect(estimateCostYuan('deepseek-v4-pro', 1_000_000, 0, 1_000_000, OFF_PEAK)).toBeCloseTo(18, 6)
+    expect(estimateCostYuan('deepseek-v4-pro', 1_000_000, 0, 1_000_000, PEAK)).toBeCloseTo(36, 6)
   })
   it('零用量为 0，负数安全', () => {
     expect(estimateCostYuan('', 0, 0, 0)).toBe(0)

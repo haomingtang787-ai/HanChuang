@@ -145,7 +145,7 @@ export function Sidebar(props: Props) {
                       <span className="hc-session-main">
                         <span className="hc-session-title" title={asset.name}>{asset.name}</span>
                         {props.assetCosts[asset.documentVersionId] && (
-                          <span className="hc-asset-cost" title="按页数本地预估，实际以备课后的真实用量为准">
+                          <span className="hc-asset-cost" title="按当前时段官方价本地预估；高峰时段约为闲时的两倍，实际以备课后的真实用量为准">
                             预估 {props.assetCosts[asset.documentVersionId]}
                           </span>
                         )}

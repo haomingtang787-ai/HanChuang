@@ -909,14 +909,15 @@ export function HanchuangApp() {
                     {usageAudit.kinds.map((kind) => (
                       <div key={kind.kind} className="hc-usage-kind">
                         {kind.kind}：{kind.calls} 次 · {(kind.promptTokens + kind.completionTokens).toLocaleString()} tokens
+                        {typeof kind.costYuan === 'number' ? ` · ${formatYuan(kind.costYuan)}` : ''}
                       </div>
                     ))}
-                    {ai && (
-                      <div className="hc-usage-cost">
-                        {formatYuan(estimateCostYuan(ai.model, usageAudit.usage.promptTokens, usageAudit.usage.cachedTokens, usageAudit.usage.completionTokens))}
-                        <span className="hc-muted">（DeepSeek 牌价估算，闲时更便宜）</span>
-                      </div>
-                    )}
+                    <div className="hc-usage-cost">
+                      {formatYuan(typeof usageAudit.usage.costYuan === 'number'
+                        ? usageAudit.usage.costYuan
+                        : estimateCostYuan(ai?.model ?? '', usageAudit.usage.promptTokens, usageAudit.usage.cachedTokens, usageAudit.usage.completionTokens))}
+                      <span className="hc-muted">（按每次调用的模型与闲时/高峰官方价估算）</span>
+                    </div>
                     {usageAudit.balance && usageAudit.balance.map((item, index) => (
                       <div key={index} className="hc-usage-balance">DeepSeek 余额：{item.totalBalance} {item.currency}</div>
                     ))}
