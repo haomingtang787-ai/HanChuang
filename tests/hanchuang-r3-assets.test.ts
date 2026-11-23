@@ -69,6 +69,16 @@ describe('文件夹扫描', () => {
     expect(paths).not.toContain('d1/d2/d3/d4/d5/d6/d7/d8/d9/第9层.txt')
   })
 
+  test('超过自动同步大小上限的文件单独报告，不进入解析清单', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-scan-size-'))
+    fs.writeFileSync(path.join(root, '正常.txt'), 'ok')
+    fs.writeFileSync(path.join(root, '过大.pdf'), Buffer.alloc(21, 'x'))
+    const scan = scanFolderFiles(root, 200, 20)
+    expect(scan.files.map((file) => file.name)).toEqual(['正常.txt'])
+    expect(scan.oversized).toBe(1)
+    expect(scan.skipped).toBe(0)
+  })
+
   test('超过上限时截断并如实报告跳过数', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-scan-cap-'))
     for (let index = 0; index < 12; index += 1) {

@@ -77,12 +77,18 @@ const FOLDER_MAX_FILES = 200
 
 /**
  * 扫一个文件夹（支持多层子目录），只返回能直接 importPath 的文件。
- * 隐藏文件、Office 的 ~$ 临时文件、系统缩略图文件、不支持的格式都计入 skipped，
+ * 隐藏文件、Office 的 ~$ 临时文件、系统缩略图文件、不支持的格式都计入 skipped；
+ * 超过自动同步上限的文件单独计入 oversized，绝不送进解析队列，避免每轮重试。
  * 让界面能如实说「还有 12 个文件没导入」而不是静默吞掉。
  */
-export function scanFolderFiles(folder: string, limit = FOLDER_MAX_FILES): { files: FolderFile[]; skipped: number } {
+export function scanFolderFiles(
+  folder: string,
+  limit = FOLDER_MAX_FILES,
+  autoMaxBytes = LIMITS.autoImportFileBytes,
+): { files: FolderFile[]; skipped: number; oversized: number } {
   const files: FolderFile[] = []
   let skipped = 0
+  let oversized = 0
   const walk = (dir: string, depth: number): void => {
     let entries: fs.Dirent[]
     try {
@@ -106,6 +112,7 @@ export function scanFolderFiles(folder: string, limit = FOLDER_MAX_FILES): { fil
       if (files.length >= limit) { skipped += 1; continue }
       try {
         const stat = fs.statSync(full)
+        if (stat.size > autoMaxBytes) { oversized += 1; continue }
         files.push({
           path: full,
           name,
@@ -120,7 +127,7 @@ export function scanFolderFiles(folder: string, limit = FOLDER_MAX_FILES): { fil
   }
   walk(folder, 0)
   files.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'zh'))
-  return { files, skipped }
+  return { files, skipped, oversized }
 }
 
 export class DocumentService {
@@ -274,7 +281,7 @@ export class DocumentService {
           return fail(requestId, 'UNSUPPORTED_FORMAT', '这个版本打不开文件夹选择框，请手动把文件拖进来。')
         }
         const picked = await this.options.dialogs.pickDirectory('', '选择存放课件的文件夹')
-        if (!picked) return ok(requestId, { cancelled: true, folder: null, files: [], skipped: 0 })
+        if (!picked) return ok(requestId, { cancelled: true, folder: null, files: [], skipped: 0, oversized: 0 })
         folder = picked
       }
       if (!path.isAbsolute(folder) || folder.includes('\0')) {
@@ -288,7 +295,7 @@ export class DocumentService {
       }
       if (!stat.isDirectory()) return fail(requestId, 'INVALID_ARGUMENT', '选中的不是文件夹。')
       const scan = scanFolderFiles(folder)
-      return ok(requestId, { cancelled: false, folder, files: scan.files, skipped: scan.skipped })
+      return ok(requestId, { cancelled: false, folder, files: scan.files, skipped: scan.skipped, oversized: scan.oversized })
     } catch (error) {
       return this.asFailure(requestId, error)
     }

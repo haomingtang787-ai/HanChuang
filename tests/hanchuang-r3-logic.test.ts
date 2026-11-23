@@ -63,6 +63,8 @@ describe('同步文件夹索引', () => {
       'chapter1.pdf': { sizeBytes: 10, modifiedMs: 100 },
       'gone.pdf': { sizeBytes: 20, modifiedMs: 200 },
     },
+    failed: {},
+    oversized: 0,
     lastScanAt: null,
     error: null,
     changedPaths: [],
@@ -79,6 +81,8 @@ describe('同步文件夹索引', () => {
     expect(items).toHaveLength(1)
     expect(items[0].enabled).toBe(false)
     expect(items[0].known['chapter1.pdf']).toEqual({ sizeBytes: 10, modifiedMs: 100 })
+    expect(items[0].failed).toEqual({})
+    expect(items[0].oversized).toBe(0)
   })
 
   test('diff 只把没见过的算新增，改过的算变更，消失的算缺失', () => {
@@ -96,6 +100,25 @@ describe('同步文件夹索引', () => {
       { path: 'C:\\Users\\16122\\Desktop\\数据结构\\chapter1.pdf', name: 'chapter1.pdf', relativePath: 'chapter1.pdf', sizeBytes: 11, modifiedMs: 101 },
     ])
     expect(changed.changed.map((file) => file.relativePath)).toEqual(['chapter1.pdf'])
+  })
+
+  test('失败过且内容没变的文件不再算新增，不触发每轮重试', () => {
+    const failedWatch: FolderWatch = {
+      ...watch,
+      failed: {
+        'chapter2.pdf': { sizeBytes: 30, modifiedMs: 300, reason: 'PARSE_FAILED' },
+      },
+    }
+    const same = diffFolderFiles(failedWatch, [
+      { path: '', name: 'chapter2.pdf', relativePath: 'chapter2.pdf', sizeBytes: 30, modifiedMs: 300 },
+    ])
+    expect(same.added).toEqual([])
+    expect(same.changed).toEqual([])
+
+    const modified = diffFolderFiles(failedWatch, [
+      { path: '', name: 'chapter2.pdf', relativePath: 'chapter2.pdf', sizeBytes: 31, modifiedMs: 301 },
+    ])
+    expect(modified.added.map((file) => file.relativePath)).toEqual(['chapter2.pdf'])
   })
 
   test('rememberFiles 只更新传入的文件，其它签名保留', () => {

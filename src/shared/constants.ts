@@ -5,6 +5,8 @@ export const MAX_PAGE_LIMIT = 200
 
 export const LIMITS = {
   maxFileBytes: 80 * 1024 * 1024,
+  /** 自动同步的单文件上限：超过它的文件只提示跳过，不反复尝试解析。单文件手动上传仍按 maxFileBytes 判断。 */
+  autoImportFileBytes: 50 * 1024 * 1024,
   maxTextFileBytes: 8 * 1024 * 1024,
   maxZipEntries: 4000,
   maxUncompressedEntryBytes: 32 * 1024 * 1024,

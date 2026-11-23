@@ -247,14 +247,19 @@ export function loadAssets(): AssetItem[] {
   }
 }
 
-/** 一门课绑定的同步文件夹；文件签名放在 known 里，用来区分「新增」和「已经导入过」。 */
+/** 一门课绑定的同步文件夹；文件签名放在 known 里，用来区分「新增」和「已经导入过」。
+ * failed 记录解析失败且签名未变的文件，避免每 15 秒重复导入；文件被改动后签名不同，会重新尝试。 */
 export type FolderKnownFile = { sizeBytes: number; modifiedMs: number }
+export type FolderFailedFile = FolderKnownFile & { reason: string }
 export type FolderWatch = {
   courseId: string
   folder: string
   folderName: string
   enabled: boolean
   known: Record<string, FolderKnownFile>
+  failed: Record<string, FolderFailedFile>
+  /** 最近一次扫描里超过自动导入上限、已跳过的文件数。 */
+  oversized: number
   lastScanAt: string | null
   error: string | null
   changedPaths: string[]
@@ -278,6 +283,22 @@ function knownOf(raw: unknown): Record<string, FolderKnownFile> {
     known[key] = { sizeBytes, modifiedMs }
   }
   return known
+}
+
+function failedOf(raw: unknown): Record<string, FolderFailedFile> {
+  const source = objectOf(raw)
+  if (!source) return {}
+  const failed: Record<string, FolderFailedFile> = {}
+  for (const [key, value] of Object.entries(source)) {
+    const row = objectOf(value)
+    if (!row) continue
+    const sizeBytes = typeof row.sizeBytes === 'number' && Number.isFinite(row.sizeBytes) ? row.sizeBytes : null
+    const modifiedMs = typeof row.modifiedMs === 'number' && Number.isFinite(row.modifiedMs) ? row.modifiedMs : null
+    const reason = typeof row.reason === 'string' && row.reason !== '' ? row.reason : '解析失败'
+    if (key === '' || sizeBytes === null || modifiedMs === null) continue
+    failed[key] = { sizeBytes, modifiedMs, reason: reason.slice(0, 500) }
+  }
+  return failed
 }
 
 function stringListOf(raw: unknown): string[] {
@@ -310,6 +331,8 @@ export function readFolderWatches(raw: string | null): FolderWatch[] {
       folderName,
       enabled: row.enabled !== false,
       known: knownOf(row.known),
+      failed: failedOf(row.failed),
+      oversized: typeof row.oversized === 'number' && Number.isFinite(row.oversized) && row.oversized > 0 ? Math.floor(row.oversized) : 0,
       lastScanAt: typeof row.lastScanAt === 'string' && row.lastScanAt !== '' ? row.lastScanAt : null,
       error: typeof row.error === 'string' && row.error !== '' ? row.error : null,
       changedPaths: stringListOf(row.changedPaths),
@@ -360,6 +383,11 @@ export function diffFolderFiles(watch: FolderWatch, files: FolderFile[]): Folder
   const seen = new Set<string>()
   for (const file of files) {
     seen.add(file.relativePath)
+    const failed = watch.failed[file.relativePath]
+    if (failed && failed.sizeBytes === file.sizeBytes && failed.modifiedMs === file.modifiedMs) {
+      // 这个文件已经失败过且内容没变，自动同步不再每轮重捅一次。
+      continue
+    }
     const known = watch.known[file.relativePath]
     if (!known) {
       added.push(file)
@@ -367,7 +395,8 @@ export function diffFolderFiles(watch: FolderWatch, files: FolderFile[]): Folder
     }
     if (known.sizeBytes !== file.sizeBytes || known.modifiedMs !== file.modifiedMs) changed.push(file)
   }
-  const missing = Object.keys(watch.known).filter((path) => !seen.has(path))
+  const indexed = new Set([...Object.keys(watch.known), ...Object.keys(watch.failed)])
+  const missing = [...indexed].filter((path) => !seen.has(path))
   return { added, changed, missing }
 }
 

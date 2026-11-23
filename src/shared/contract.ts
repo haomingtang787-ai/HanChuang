@@ -156,7 +156,7 @@ export type FolderFile = {
   sizeBytes: number
   modifiedMs: number
 }
-export type FolderScan = { cancelled: boolean; folder: string | null; files: FolderFile[]; skipped: number }
+export type FolderScan = { cancelled: boolean; folder: string | null; files: FolderFile[]; skipped: number; oversized: number }
 
 export type BlockView = {
   blockId: string

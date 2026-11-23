@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import type { StudyCourseTree } from '../../shared/study'
+import { LIMITS } from '../../shared/constants'
 import { assetTreeOf, type AssetItem, type AssetTreeNode, type FolderWatch } from './logic'
 import { BrandMark } from './BrandMark'
 
@@ -34,6 +35,28 @@ type Props = {
   onOpenSettings: () => void
   /** 收起左栏，把地方让给课件和对话（顶栏 ≡ 也能再打开）。 */
   onCollapse: () => void
+}
+
+function folderWatchText(watch: FolderWatch): string {
+  if (watch.error) return '文件夹找不到'
+  if (!watch.enabled) return '自动同步已停止'
+  const parts: string[] = []
+  if (watch.changedPaths.length > 0) parts.push(`${watch.changedPaths.length} 份内容有更新`)
+  if (watch.oversized > 0) parts.push(`${watch.oversized} 份太大，已跳过`)
+  const failed = Object.keys(watch.failed).length
+  if (failed > 0) parts.push(`${failed} 份失败，已暂停重试`)
+  if (watch.missingPaths.length > 0) parts.push(`${watch.missingPaths.length} 个已移走`)
+  if (parts.length > 0) return `${parts.join(' · ')} · 自动同步`
+  return `${Object.keys(watch.known).length} 份已收 · 自动同步`
+}
+
+function folderWatchDetail(watch: FolderWatch): string {
+  const lines: string[] = [watch.folder]
+  if (watch.oversized > 0) {
+    lines.push(`${watch.oversized} 份文件超过 ${Math.round(LIMITS.autoImportFileBytes / 1024 / 1024)} MB，自动同步不会导入它们。`)
+  }
+  for (const [path, item] of Object.entries(watch.failed)) lines.push(`${path}：${item.reason}`)
+  return lines.join('\n')
 }
 
 /** 左栏只做一件事：课程 → 课件。上传入口就在课程里面，不再满屏找按钮。 */
@@ -224,16 +247,8 @@ export function Sidebar(props: Props) {
                       <span className={`hc-folder-watch-dot${watch.enabled && !watch.error ? ' on' : ''}`} />
                       <span className="hc-folder-watch-text">
                         <span className="hc-folder-watch-name">{watch.folderName}</span>
-                        <span className="hc-folder-watch-meta">
-                          {watch.error
-                            ? '文件夹找不到'
-                            : !watch.enabled
-                              ? '自动同步已停止'
-                              : watch.changedPaths.length > 0
-                                ? `${watch.changedPaths.length} 份内容有更新`
-                                : watch.missingPaths.length > 0
-                                  ? `${watch.missingPaths.length} 个已移走 · 素材保留`
-                                  : `${Object.keys(watch.known).length} 份已收 · 自动同步`}
+                        <span className="hc-folder-watch-meta" title={folderWatchDetail(watch)}>
+                          {folderWatchText(watch)}
                         </span>
                       </span>
                       <span className="hc-folder-watch-actions" onClick={(event) => event.stopPropagation()}>

@@ -100,6 +100,7 @@ export function HanchuangApp() {
   const syncingFolders = useRef<Set<string>>(new Set())
   const folderErrorNotified = useRef<Set<string>>(new Set())
   const folderChangedNotified = useRef<Set<string>>(new Set())
+  const folderSkippedNotified = useRef<Set<string>>(new Set())
   const syncFolderRef = useRef<(courseId: string, manual?: boolean) => Promise<void>>(async () => {})
 
   function toggleTheme(): void {
@@ -327,6 +328,7 @@ export function HanchuangApp() {
         : {
             ...item,
             known: rememberFiles(item.known, [file]),
+            failed: Object.fromEntries(Object.entries(item.failed).filter(([path]) => path !== meta.relativePath)),
             changedPaths: item.changedPaths.filter((path) => path !== meta.relativePath),
             error: null,
           })
@@ -338,6 +340,33 @@ export function HanchuangApp() {
   const updateWatch = useCallback((courseId: string, patch: Partial<FolderWatch>) => {
     setFolderWatches((prev) => {
       const next = prev.map((item) => item.courseId === courseId ? { ...item, ...patch } : item)
+      folderWatchesRef.current = next
+      return next
+    })
+  }, [])
+
+  /** 记下失败签名：下一次扫描看到同一份文件就不再自动重试，避免每 15 秒重捅一次。 */
+  const markFolderFailure = useCallback((
+    courseId: string,
+    relativePath: string | undefined,
+    sizeBytes: number | undefined,
+    modifiedMs: number | undefined,
+    reason: string,
+  ) => {
+    if (!relativePath || sizeBytes === undefined || modifiedMs === undefined) return
+    setFolderWatches((prev) => {
+      const watch = prev.find((item) => item.courseId === courseId)
+      if (!watch) return prev
+      const detail = reason.replace(/\s+/g, ' ').trim().slice(0, 200) || '解析失败'
+      const next = prev.map((item) => item.courseId !== courseId
+        ? item
+        : {
+            ...item,
+            failed: {
+              ...item.failed,
+              [relativePath]: { sizeBytes, modifiedMs, reason: detail },
+            },
+          })
       folderWatchesRef.current = next
       return next
     })
@@ -394,6 +423,7 @@ export function HanchuangApp() {
         && item.name === (meta.pendingKey ?? meta.name))))
       if (state !== 'succeeded' && state !== 'partial') {
         notify('bad', `《${meta.name}》解析失败：${message ?? state}`)
+        markFolderFailure(meta.courseId, meta.relativePath, meta.sizeBytes, meta.modifiedMs, message ?? state)
         return
       }
       if (meta.prep) {
@@ -418,7 +448,7 @@ export function HanchuangApp() {
       finishJob(meta, event.state)
     })
     return () => { off() }
-  }, [api, notify, queueCreate, commitAsset, markKnownInWatch])
+  }, [api, notify, queueCreate, commitAsset, markKnownInWatch, markFolderFailure])
 
   // 文件夹轮询：寒窗开着时每 15 秒扫一次；窗口重新获得焦点也补扫。关着时下次启动补。
   useEffect(() => {
@@ -525,6 +555,7 @@ export function HanchuangApp() {
     if (!result.ok) {
       setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === pendingKey)))
       notify('bad', `《${pendingKey}》：${result.error.message}`)
+      markFolderFailure(courseId, file.relativePath, file.sizeBytes, file.modifiedMs, result.error.message)
       return false
     }
     const meta: JobMeta = {
@@ -554,6 +585,7 @@ export function HanchuangApp() {
         return true
       }
       notify('bad', `《${pendingKey}》解析失败：${job.data.error?.message ?? job.data.state}`)
+      markFolderFailure(courseId, file.relativePath, file.sizeBytes, file.modifiedMs, job.data.error?.message ?? job.data.state)
       return false
     }
     return true
@@ -581,13 +613,25 @@ export function HanchuangApp() {
         return
       }
       folderErrorNotified.current.delete(courseId)
+      const alive = new Set(scan.data.files.map((file) => file.relativePath))
+      const failed = Object.fromEntries(Object.entries(watch.failed).filter(([path]) => alive.has(path)))
       const diff = diffFolderFiles(watch, scan.data.files)
       updateWatch(courseId, {
         lastScanAt: new Date().toISOString(),
         error: null,
+        failed,
+        oversized: scan.data.oversized ?? 0,
         changedPaths: diff.changed.map((file) => file.relativePath),
         missingPaths: diff.missing,
       })
+      if ((scan.data.oversized ?? 0) > 0) {
+        if (!folderSkippedNotified.current.has(watch.folder)) {
+          folderSkippedNotified.current.add(watch.folder)
+          notify('info', `这个文件夹里有 ${scan.data.oversized} 份文件超过 50 MB，已跳过自动导入，不会再反复重试；需要的话请压缩或拆分后再放进来。`)
+        }
+      } else {
+        folderSkippedNotified.current.delete(watch.folder)
+      }
       if (diff.changed.length > 0) {
         if (!manual && !folderChangedNotified.current.has(courseId)) {
           folderChangedNotified.current.add(courseId)
@@ -649,6 +693,8 @@ export function HanchuangApp() {
       folderName,
       enabled: true,
       known,
+      failed: sameFolder ? { ...(existing?.failed ?? {}) } : {},
+      oversized: sameFolder ? (existing?.oversized ?? 0) : 0,
       lastScanAt: existing?.lastScanAt ?? null,
       error: null,
       changedPaths: [],
@@ -656,11 +702,14 @@ export function HanchuangApp() {
     }
     const diff = diffFolderFiles(watch, scan.data.files)
     const skippedNote = scan.data.skipped > 0 ? `\n另有 ${scan.data.skipped} 个不支持或隐藏的文件会跳过。` : ''
+    const oversizedNote = (scan.data.oversized ?? 0) > 0
+      ? `\n另有 ${scan.data.oversized} 个文件超过 50 MB，自动同步会跳过它们，不再反复导入。`
+      : ''
     const summary = scan.data.files.length === 0
-      ? `「${folderName}」里现在还没有能导入的课件。要把它设为自动同步文件夹吗？以后放进去的课件会自动进来。`
+      ? `「${folderName}」里现在还没有能导入的课件。要把它设为自动同步文件夹吗？以后放进去的课件会自动进来。${oversizedNote}`
       : sameFolder
-        ? `「${folderName}」已经在这个课程里同步：${diff.added.length} 份新增，${diff.changed.length} 份内容有更新。\n继续同步吗？`
-        : `选中「${folderName}」，找到 ${scan.data.files.length} 份课件。\n以后直接往这个文件夹里放新课件，寒窗会自动导入，不用重新选。\n只导入素材、不自动备课，不花 token。${skippedNote}`
+        ? `「${folderName}」已经在这个课程里同步：${diff.added.length} 份新增，${diff.changed.length} 份内容有更新。\n继续同步吗？${oversizedNote}`
+        : `选中「${folderName}」，找到 ${scan.data.files.length} 份课件。\n以后直接往这个文件夹里放新课件，寒窗会自动导入，不用重新选。\n只导入素材、不自动备课，不花 token。${skippedNote}${oversizedNote}`
     if (!window.confirm(summary)) return
     const next = upsertFolderWatch(folderWatchesRef.current, watch)
     folderWatchesRef.current = next
