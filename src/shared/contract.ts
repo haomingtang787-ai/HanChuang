@@ -148,7 +148,14 @@ export type PageView = {
 export type PageList = { items: PageView[]; total: number }
 
 /** 文件夹扫描结果：只列受支持的课件，导入与否由界面决定。 */
-export type FolderFile = { path: string; name: string; sizeBytes: number }
+export type FolderFile = {
+  path: string
+  name: string
+  /** 相对选中文件夹的路径，子目录用 / 分隔；用于左栏分组和更新比对。 */
+  relativePath: string
+  sizeBytes: number
+  modifiedMs: number
+}
 export type FolderScan = { cancelled: boolean; folder: string | null; files: FolderFile[]; skipped: number }
 
 export type BlockView = {

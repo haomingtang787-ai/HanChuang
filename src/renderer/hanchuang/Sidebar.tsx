@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactElement } from 'react'
 import type { StudyCourseTree } from '../../shared/study'
-import type { AssetItem } from './logic'
+import { assetTreeOf, type AssetItem, type AssetTreeNode, type FolderWatch } from './logic'
 import { BrandMark } from './BrandMark'
 
 export type PendingUpload = { courseId: string; name: string; stage: string; dvid?: string }
@@ -11,6 +11,7 @@ type Props = {
   expanded: Set<string>
   pending: PendingUpload[]
   assets: AssetItem[]
+  folderWatches: FolderWatch[]
   /** 每份素材备课一次的预估花费（按页数本地估，不调模型）。 */
   assetCosts: Record<string, string>
   missCount: number
@@ -19,6 +20,9 @@ type Props = {
   onOpenSession: (sessionId: string) => void
   onUpload: (courseId: string) => void
   onImportFolder: (courseId: string) => void
+  /** 立即扫一次；已停止的文件夹也会顺带恢复。 */
+  onSyncFolder: (courseId: string) => void
+  onStopFolder: (courseId: string) => void
   onPrepAsset: (courseId: string, documentVersionId: string, name: string) => void
   onRemoveAsset: (courseId: string, documentVersionId: string) => void
   onDropFiles: (courseId: string, files: File[]) => void
@@ -38,7 +42,79 @@ export function Sidebar(props: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const items = props.courses?.items ?? []
+
+  function toggleFolder(key: string): void {
+    setOpenFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function countAssets(node: AssetTreeNode): number {
+    return node.assets.length + node.folders.reduce((sum, child) => sum + countAssets(child), 0)
+  }
+
+  function renderAsset(asset: AssetItem): ReactElement {
+    return (
+      <div key={`a${asset.documentVersionId}`} className="hc-session-row asset">
+        <span className="hc-session-main">
+          <span className="hc-session-title" title={asset.relativePath ?? asset.name}>{asset.name}</span>
+          {props.assetCosts[asset.documentVersionId] && (
+            <span className="hc-asset-cost" title="按当前时段官方价本地预估；高峰时段约为闲时的两倍，实际以备课后的真实用量为准">
+              预估 {props.assetCosts[asset.documentVersionId]}
+            </span>
+          )}
+        </span>
+        <span className="hc-row-actions" onClick={(event) => event.stopPropagation()}>
+          <button
+            className="hc-asset-prep"
+            title="让老师读这份课件并排成一门课"
+            onClick={() => props.onPrepAsset(asset.courseId, asset.documentVersionId, asset.name)}
+          >
+            备课
+          </button>
+          <button
+            title="从素材里移出（课件仍在文档库，不删文件）"
+            onClick={() => props.onRemoveAsset(asset.courseId, asset.documentVersionId)}
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+    )
+  }
+
+  function renderFolder(node: AssetTreeNode, courseId: string, depth: number): ReactElement {
+    if (depth === 0) {
+      return (
+        <div className="hc-asset-tree">
+          {node.assets.map(renderAsset)}
+          {node.folders.map((child) => renderFolder(child, courseId, depth + 1))}
+        </div>
+      )
+    }
+    const key = `${courseId}:${node.path}`
+    const open = openFolders.has(key)
+    return (
+      <div key={`f${key}`} className="hc-asset-folder" style={{ marginLeft: depth === 1 ? 0 : 8 }}>
+        <button className="hc-asset-folder-head" onClick={() => toggleFolder(key)}>
+          <span className="hc-caret">{open ? '▾' : '▸'}</span>
+          <span className="hc-asset-folder-name" title={node.path}>{node.name}</span>
+          <span className="hc-asset-folder-count">{countAssets(node)}</span>
+        </button>
+        {open && (
+          <div className="hc-asset-folder-body" style={{ paddingLeft: 10 }}>
+            {node.assets.map(renderAsset)}
+            {node.folders.map((child) => renderFolder(child, courseId, depth + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   function submitNew(): void {
     const name = newName.trim()
@@ -74,6 +150,8 @@ export function Sidebar(props: Props) {
           const open = props.expanded.has(course.courseId)
           const coursePending = props.pending.filter((item) => item.courseId === course.courseId)
           const courseAssets = props.assets.filter((item) => item.courseId === course.courseId)
+          const watch = props.folderWatches.find((item) => item.courseId === course.courseId)
+          const assetTree = assetTreeOf(courseAssets)
           return (
             <div
               key={course.courseId}
@@ -140,35 +218,45 @@ export function Sidebar(props: Props) {
                   {courseAssets.length > 0 && (
                     <div className="hc-asset-head">素材 · 未备课（点「备课」才花 token）</div>
                   )}
-                  {courseAssets.map((asset) => (
-                    <div key={`a${asset.documentVersionId}`} className="hc-session-row asset">
-                      <span className="hc-session-main">
-                        <span className="hc-session-title" title={asset.name}>{asset.name}</span>
-                        {props.assetCosts[asset.documentVersionId] && (
-                          <span className="hc-asset-cost" title="按当前时段官方价本地预估；高峰时段约为闲时的两倍，实际以备课后的真实用量为准">
-                            预估 {props.assetCosts[asset.documentVersionId]}
-                          </span>
-                        )}
+                  {renderFolder(assetTree, course.courseId, 0)}
+                  {watch && (
+                    <div className={`hc-folder-watch${watch.error ? ' error' : ''}`} title={watch.folder}>
+                      <span className={`hc-folder-watch-dot${watch.enabled && !watch.error ? ' on' : ''}`} />
+                      <span className="hc-folder-watch-text">
+                        <span className="hc-folder-watch-name">{watch.folderName}</span>
+                        <span className="hc-folder-watch-meta">
+                          {watch.error
+                            ? '文件夹找不到'
+                            : !watch.enabled
+                              ? '自动同步已停止'
+                              : watch.changedPaths.length > 0
+                                ? `${watch.changedPaths.length} 份内容有更新`
+                                : watch.missingPaths.length > 0
+                                  ? `${watch.missingPaths.length} 个已移走 · 素材保留`
+                                  : `${Object.keys(watch.known).length} 份已收 · 自动同步`}
+                        </span>
                       </span>
-                      <span className="hc-row-actions" onClick={(event) => event.stopPropagation()}>
-                        <button
-                          className="hc-asset-prep"
-                          title="让老师读这份课件并排成一门课"
-                          onClick={() => props.onPrepAsset(course.courseId, asset.documentVersionId, asset.name)}
-                        >
-                          备课
-                        </button>
-                        <button
-                          title="从素材里移出（课件仍在文档库，不删文件）"
-                          onClick={() => props.onRemoveAsset(course.courseId, asset.documentVersionId)}
-                        >
-                          ✕
-                        </button>
+                      <span className="hc-folder-watch-actions" onClick={(event) => event.stopPropagation()}>
+                        {watch.enabled && (
+                          <button title="马上扫一次；内容改过的课件会先问你" onClick={() => props.onSyncFolder(course.courseId)}>同步</button>
+                        )}
+                        {watch.enabled
+                          ? <button title="停止自动同步，素材和课堂都保留" onClick={() => props.onStopFolder(course.courseId)}>停</button>
+                          : <button title="恢复自动同步并马上扫一次" onClick={() => props.onSyncFolder(course.courseId)}>恢复</button>}
+                        <button title="换一个同步文件夹" onClick={() => props.onImportFolder(course.courseId)}>换</button>
                       </span>
                     </div>
-                  ))}
+                  )}
                   <button className="hc-upload-btn" onClick={() => props.onUpload(course.courseId)}>＋ 上传课件 / 拖到这里</button>
-                  <button className="hc-folder-btn" onClick={() => props.onImportFolder(course.courseId)}>＋ 导入整个文件夹</button>
+                  {!watch && (
+                    <button
+                      className="hc-folder-btn"
+                      title="选一次，以后直接往这个文件夹里放课件就会自动同步"
+                      onClick={() => props.onImportFolder(course.courseId)}
+                    >
+                      ＋ 导入整个文件夹
+                    </button>
+                  )}
                 </div>
               )}
             </div>

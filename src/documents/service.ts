@@ -72,11 +72,11 @@ const STAGES = new Set(['queued', 'extract', 'render', 'commit', 'done', 'cancel
 /** 能直接入库的扩展名：拖拽、选择文件、扫文件夹三处共用一份，免得提示和实际行为不一致。 */
 const SUPPORTED_IMPORT_EXT = ['pptx', 'docx', 'pdf', 'txt', 'md', 'markdown', 'png', 'jpg', 'jpeg', ...CODE_EXTENSIONS]
 const FOLDER_SKIP_NAMES = new Set(['desktop.ini', 'thumbs.db'])
-const FOLDER_MAX_DEPTH = 2
+const FOLDER_MAX_DEPTH = 8
 const FOLDER_MAX_FILES = 200
 
 /**
- * 扫一个文件夹（含两层子目录），只返回能直接 importPath 的文件。
+ * 扫一个文件夹（支持多层子目录），只返回能直接 importPath 的文件。
  * 隐藏文件、Office 的 ~$ 临时文件、系统缩略图文件、不支持的格式都计入 skipped，
  * 让界面能如实说「还有 12 个文件没导入」而不是静默吞掉。
  */
@@ -105,14 +105,21 @@ export function scanFolderFiles(folder: string, limit = FOLDER_MAX_FILES): { fil
       if (!SUPPORTED_IMPORT_EXT.includes(ext)) { skipped += 1; continue }
       if (files.length >= limit) { skipped += 1; continue }
       try {
-        files.push({ path: full, name, sizeBytes: fs.statSync(full).size })
+        const stat = fs.statSync(full)
+        files.push({
+          path: full,
+          name,
+          relativePath: path.relative(folder, full).split(path.sep).join('/'),
+          sizeBytes: stat.size,
+          modifiedMs: stat.mtimeMs,
+        })
       } catch {
         skipped += 1
       }
     }
   }
   walk(folder, 0)
-  files.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'zh'))
   return { files, skipped }
 }
 

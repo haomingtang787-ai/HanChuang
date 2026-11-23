@@ -1,5 +1,6 @@
 import type { StudyArtifact, StudyLayout, StudyMessage, StudySessionDetail, StudyUnit } from '../../shared/study'
 import type { SearchHit } from '../../shared/search'
+import type { FolderFile } from '../../shared/contract'
 import { estimateCallCostYuan, isPeakTime } from '../../shared/pricing'
 
 /** 一段已经讲过的课：本地揭示进度，重启后从 localStorage 恢复。 */
@@ -173,9 +174,19 @@ export function prepPhaseLabel(phase: 'vision' | 'reading' | 'planning'): string
 }
 
 /** 文件夹导入的「素材」：已解析入库、但还没花 token 备课的课件。 */
-export type AssetItem = { courseId: string; documentVersionId: string; name: string; addedAt: string }
+export type AssetItem = {
+  courseId: string
+  documentVersionId: string
+  name: string
+  addedAt: string
+  /** 选中的同步文件夹里的绝对路径；手动上传的素材没有。 */
+  sourcePath?: string
+  /** 相对同步文件夹的路径，用来在左栏还原子目录。 */
+  relativePath?: string
+}
 
 const ASSETS_KEY = 'hc.assets.v1'
+const FOLDER_WATCHES_KEY = 'hc.folderWatches.v1'
 
 /** 读素材索引：任何坏数据都回落成空数组，不拖垮界面。 */
 export function readAssets(raw: string | null): AssetItem[] {
@@ -200,7 +211,16 @@ export function readAssets(raw: string | null): AssetItem[] {
     const key = `${courseId}:${documentVersionId}`
     if (seen.has(key)) continue
     seen.add(key)
-    items.push({ courseId, documentVersionId, name, addedAt: addedAt === '' ? new Date().toISOString() : addedAt })
+    const sourcePath = typeof row.sourcePath === 'string' && row.sourcePath !== '' ? row.sourcePath : undefined
+    const relativePath = typeof row.relativePath === 'string' && row.relativePath !== '' ? row.relativePath : undefined
+    items.push({
+      courseId,
+      documentVersionId,
+      name,
+      addedAt: addedAt === '' ? new Date().toISOString() : addedAt,
+      ...(sourcePath ? { sourcePath } : {}),
+      ...(relativePath ? { relativePath } : {}),
+    })
   }
   return items
 }
@@ -226,6 +246,166 @@ export function loadAssets(): AssetItem[] {
     return []
   }
 }
+
+/** 一门课绑定的同步文件夹；文件签名放在 known 里，用来区分「新增」和「已经导入过」。 */
+export type FolderKnownFile = { sizeBytes: number; modifiedMs: number }
+export type FolderWatch = {
+  courseId: string
+  folder: string
+  folderName: string
+  enabled: boolean
+  known: Record<string, FolderKnownFile>
+  lastScanAt: string | null
+  error: string | null
+  changedPaths: string[]
+  missingPaths: string[]
+}
+
+function objectOf(raw: unknown): Record<string, unknown> | null {
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null
+}
+
+function knownOf(raw: unknown): Record<string, FolderKnownFile> {
+  const source = objectOf(raw)
+  if (!source) return {}
+  const known: Record<string, FolderKnownFile> = {}
+  for (const [key, value] of Object.entries(source)) {
+    const row = objectOf(value)
+    if (!row) continue
+    const sizeBytes = typeof row.sizeBytes === 'number' && Number.isFinite(row.sizeBytes) ? row.sizeBytes : null
+    const modifiedMs = typeof row.modifiedMs === 'number' && Number.isFinite(row.modifiedMs) ? row.modifiedMs : null
+    if (key === '' || sizeBytes === null || modifiedMs === null) continue
+    known[key] = { sizeBytes, modifiedMs }
+  }
+  return known
+}
+
+function stringListOf(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === 'string' && value !== '') : []
+}
+
+/** 读同步文件夹索引；坏条目跳过，不影响其它课程。 */
+export function readFolderWatches(raw: string | null): FolderWatch[] {
+  if (!raw) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const seen = new Set<string>()
+  const items: FolderWatch[] = []
+  for (const entry of parsed) {
+    const row = objectOf(entry)
+    if (!row) continue
+    const courseId = typeof row.courseId === 'string' ? row.courseId : ''
+    const folder = typeof row.folder === 'string' ? row.folder : ''
+    const folderName = typeof row.folderName === 'string' && row.folderName !== '' ? row.folderName : folder.split(/[\\/]/).pop() ?? ''
+    if (courseId === '' || folder === '' || seen.has(courseId)) continue
+    seen.add(courseId)
+    items.push({
+      courseId,
+      folder,
+      folderName,
+      enabled: row.enabled !== false,
+      known: knownOf(row.known),
+      lastScanAt: typeof row.lastScanAt === 'string' && row.lastScanAt !== '' ? row.lastScanAt : null,
+      error: typeof row.error === 'string' && row.error !== '' ? row.error : null,
+      changedPaths: stringListOf(row.changedPaths),
+      missingPaths: stringListOf(row.missingPaths),
+    })
+  }
+  return items
+}
+
+export function saveFolderWatches(items: FolderWatch[]): void {
+  try {
+    localStorage.setItem(FOLDER_WATCHES_KEY, JSON.stringify(items))
+  } catch {
+    // 存储满了不影响上课；下次启动最多重新扫一遍。
+  }
+}
+
+export function loadFolderWatches(): FolderWatch[] {
+  try {
+    return readFolderWatches(localStorage.getItem(FOLDER_WATCHES_KEY))
+  } catch {
+    return []
+  }
+}
+
+export function upsertFolderWatch(items: FolderWatch[], entry: FolderWatch): FolderWatch[] {
+  const rest = items.filter((item) => item.courseId !== entry.courseId)
+  return [...rest, entry]
+}
+
+export function dropFolderWatch(items: FolderWatch[], courseId: string): FolderWatch[] {
+  return items.filter((item) => item.courseId !== courseId)
+}
+
+/** 用一次扫描结果更新已知签名；只更新成功导入/已确认的文件。 */
+export function rememberFiles(known: Record<string, FolderKnownFile>, files: FolderFile[]): Record<string, FolderKnownFile> {
+  const next = { ...known }
+  for (const file of files) next[file.relativePath] = { sizeBytes: file.sizeBytes, modifiedMs: file.modifiedMs }
+  return next
+}
+
+export type FolderDiff = { added: FolderFile[]; changed: FolderFile[]; missing: string[] }
+
+/** 对比上次索引：新增才自动入库；改内容只提示，等用户手动同步。 */
+export function diffFolderFiles(watch: FolderWatch, files: FolderFile[]): FolderDiff {
+  const added: FolderFile[] = []
+  const changed: FolderFile[] = []
+  const seen = new Set<string>()
+  for (const file of files) {
+    seen.add(file.relativePath)
+    const known = watch.known[file.relativePath]
+    if (!known) {
+      added.push(file)
+      continue
+    }
+    if (known.sizeBytes !== file.sizeBytes || known.modifiedMs !== file.modifiedMs) changed.push(file)
+  }
+  const missing = Object.keys(watch.known).filter((path) => !seen.has(path))
+  return { added, changed, missing }
+}
+
+/** 素材按相对路径还原成目录树；没有 relativePath 的老素材留在根上。 */
+export type AssetTreeNode = { name: string; path: string; assets: AssetItem[]; folders: AssetTreeNode[] }
+
+function emptyNode(name: string, path: string): AssetTreeNode {
+  return { name, path, assets: [], folders: [] }
+}
+
+function folderChild(node: AssetTreeNode, name: string): AssetTreeNode {
+  const childPath = node.path === '' ? name : `${node.path}/${name}`
+  let child = node.folders.find((item) => item.name === name)
+  if (!child) {
+    child = emptyNode(name, childPath)
+    node.folders.push(child)
+  }
+  return child
+}
+
+/** 只按路径建树，不依赖导入顺序；根目录文件排在最前。 */
+export function assetTreeOf(items: AssetItem[]): AssetTreeNode {
+  const root = emptyNode('', '')
+  for (const item of items) {
+    const segments = (item.relativePath ?? '').replace(/\\/g, '/').split('/').filter((part) => part !== '')
+    let node = root
+    for (const segment of segments.slice(0, -1)) node = folderChild(node, segment)
+    node.assets.push(item)
+  }
+  const sortNode = (node: AssetTreeNode): void => {
+    node.folders.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    node.assets.sort((a, b) => (a.relativePath ?? a.name).localeCompare(b.relativePath ?? b.name, 'zh'))
+    for (const child of node.folders) sortNode(child)
+  }
+  sortNode(root)
+  return root
+}
+
 
 export function saveAssets(items: AssetItem[]): void {
   try {

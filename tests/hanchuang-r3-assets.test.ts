@@ -34,21 +34,39 @@ describe('文件夹扫描', () => {
     expect(names).toContain('图片.png')
     expect(names).toContain('内存.pdf')
     expect(names).toContain('也扫.txt')
+    expect(names).toContain('不扫.md')
     expect(names).not.toContain('README')
     expect(names).not.toContain('~$临时.docx')
     expect(names).not.toContain('.hidden.pdf')
     expect(names).not.toContain('old.doc')
-    expect(names).not.toContain('不扫.md')
     expect(scan.skipped).toBeGreaterThanOrEqual(4)
   })
 
-  test('每个文件都带绝对路径与字节数，方便直接 importPath', () => {
+  test('每个文件都带绝对路径、相对路径、字节数与修改时间，方便直接 importPath 和更新比对', () => {
     const root = tempTree()
     const scan = scanFolderFiles(root)
     for (const file of scan.files) {
       expect(path.isAbsolute(file.path)).toBe(true)
       expect(file.sizeBytes).toBeGreaterThanOrEqual(0)
+      expect(file.modifiedMs).toBeGreaterThan(0)
+      expect(file.relativePath).not.toContain('\\')
     }
+    expect(scan.files.find((file) => file.name === '不扫.md')?.relativePath).toBe('第二章/深一层/第三层/不扫.md')
+  })
+
+  test('最多递归 8 层，超过后停止但保留前 8 层', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hc-scan-depth-'))
+    let dir = root
+    for (let depth = 1; depth <= 9; depth += 1) {
+      dir = path.join(dir, `d${depth}`)
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, `第${depth}层.txt`), 'x')
+    }
+    const scan = scanFolderFiles(root)
+    const paths = scan.files.map((file) => file.relativePath)
+    expect(paths).toContain('d1/第1层.txt')
+    expect(paths).toContain('d1/d2/d3/d4/d5/d6/d7/d8/第8层.txt')
+    expect(paths).not.toContain('d1/d2/d3/d4/d5/d6/d7/d8/d9/第9层.txt')
   })
 
   test('超过上限时截断并如实报告跳过数', () => {

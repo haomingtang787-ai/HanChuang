@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AiConfigView } from '../../shared/ai'
-import type { JobChangedEvent, Result } from '../../shared/contract'
+import type { FolderFile, JobChangedEvent, Result } from '../../shared/contract'
 import type {
   StudyCourseTree, StudyProgress, StudyQuizAnswer, StudySessionDetail, StudySessionListItem, StudyToolKind, StudyUsageAudit,
 } from '../../shared/study'
@@ -14,16 +14,29 @@ import { SourcePane } from './SourcePane'
 import { SourceSearch } from './SourceSearch'
 import { CODE_EXTENSIONS } from '../../shared/contract'
 import {
-  currentUnitOrdinal, dropAsset, estimateCostYuan, estimatePrepCost, formatYuan, formatYuanRange, loadAssets, loadPanePref,
-  loadPrepMode, loadSidebarOpen, loadStudyDays, nextSegment, prepPhaseLabel, saveAssets, savePanePref, saveSidebarOpen, streakOf, todayKey,
-  totalSegments, touchStudyDay, upsertAsset, withPendingUserMessage,
-  type AssetItem, type PanePref, type Reveal,
+  currentUnitOrdinal, diffFolderFiles, dropAsset, dropFolderWatch, estimateCostYuan, estimatePrepCost, formatYuan, formatYuanRange,
+  loadAssets, loadFolderWatches, loadPanePref, loadPrepMode, loadSidebarOpen, loadStudyDays, nextSegment,
+  prepPhaseLabel, rememberFiles, saveAssets, saveFolderWatches, savePanePref, saveSidebarOpen, streakOf, todayKey,
+  totalSegments, touchStudyDay, upsertAsset, upsertFolderWatch, withPendingUserMessage,
+  type AssetItem, type FolderKnownFile, type FolderWatch, type PanePref, type Reveal,
 } from './logic'
 
 type Tone = 'info' | 'bad' | 'good'
 type Toast = { id: number; tone: Tone; text: string }
 type Busy = null | 'create' | 'send' | 'tool' | 'check' | 'grade' | 'finish'
-type JobMeta = { courseId: string; dvid: string; name: string; prep: boolean }
+type JobMeta = {
+  courseId: string
+  dvid: string
+  name: string
+  prep: boolean
+  /** 文件夹导入的元数据：成功后写进素材，并记住已扫过的文件签名。 */
+  relativePath?: string
+  sourcePath?: string
+  sizeBytes?: number
+  modifiedMs?: number
+  /** 侧栏进度行用相对路径做键，避免不同子目录里的同名文件互相覆盖。 */
+  pendingKey?: string
+}
 /** 左侧原件面板要显示什么：哪份课件、停在哪一页、老师引出的是哪句。 */
 type PreviewState = { documentVersionId: string; title: string; quote: string; page?: number }
 
@@ -53,6 +66,7 @@ export function HanchuangApp() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [pending, setPending] = useState<PendingUpload[]>([])
   const [assets, setAssets] = useState<AssetItem[]>(loadAssets)
+  const [folderWatches, setFolderWatches] = useState<FolderWatch[]>(loadFolderWatches)
   const [preview, setPreview] = useState<PreviewState | null>(null)
   const [busy, setBusy] = useState<Busy>(null)
   const [progress, setProgress] = useState<StudyProgress | null>(null)
@@ -81,6 +95,12 @@ export function HanchuangApp() {
   const toastSeq = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadTarget = useRef<string | null>(null)
+  const folderWatchesRef = useRef<FolderWatch[]>(folderWatches)
+  const pendingRef = useRef<PendingUpload[]>(pending)
+  const syncingFolders = useRef<Set<string>>(new Set())
+  const folderErrorNotified = useRef<Set<string>>(new Set())
+  const folderChangedNotified = useRef<Set<string>>(new Set())
+  const syncFolderRef = useRef<(courseId: string, manual?: boolean) => Promise<void>>(async () => {})
 
   function toggleTheme(): void {
     setTheme((current) => {
@@ -124,6 +144,16 @@ export function HanchuangApp() {
   useEffect(() => {
     saveSidebarOpen(sidebarOpen)
   }, [sidebarOpen])
+
+  // 同步文件夹索引落盘：课程关掉重开也能继续守同一个目录。
+  useEffect(() => {
+    folderWatchesRef.current = folderWatches
+    saveFolderWatches(folderWatches)
+  }, [folderWatches])
+
+  useEffect(() => {
+    pendingRef.current = pending
+  }, [pending])
 
   // 每份素材的备课预估价：只读本地的页数/块数，不调用模型、不花钱。
   useEffect(() => {
@@ -257,6 +287,62 @@ export function HanchuangApp() {
     void drainCreate()
   }, [drainCreate])
 
+  /** 文件解析成功后统一进素材库：同一个相对路径只留最新版本，老版本素材被替换。 */
+  const commitAsset = useCallback((meta: JobMeta) => {
+    setAssets((prev) => {
+      let next = prev
+      if (meta.relativePath) {
+        next = next.filter((item) => !(item.courseId === meta.courseId
+          && item.relativePath === meta.relativePath
+          && item.documentVersionId !== meta.dvid))
+      }
+      next = upsertAsset(next, {
+        courseId: meta.courseId,
+        documentVersionId: meta.dvid,
+        name: meta.name,
+        addedAt: new Date().toISOString(),
+        ...(meta.sourcePath ? { sourcePath: meta.sourcePath } : {}),
+        ...(meta.relativePath ? { relativePath: meta.relativePath } : {}),
+      })
+      saveAssets(next)
+      return next
+    })
+  }, [])
+
+  /** 只有解析成功才把文件签名写进监听索引；失败的文件下一轮还会重试。 */
+  const markKnownInWatch = useCallback((meta: JobMeta) => {
+    if (!meta.relativePath || meta.sizeBytes === undefined || meta.modifiedMs === undefined) return
+    const file: FolderFile = {
+      path: meta.sourcePath ?? '',
+      name: meta.name,
+      relativePath: meta.relativePath,
+      sizeBytes: meta.sizeBytes,
+      modifiedMs: meta.modifiedMs,
+    }
+    setFolderWatches((prev) => {
+      const watch = prev.find((item) => item.courseId === meta.courseId)
+      if (!watch) return prev
+      const next = prev.map((item) => item.courseId !== meta.courseId
+        ? item
+        : {
+            ...item,
+            known: rememberFiles(item.known, [file]),
+            changedPaths: item.changedPaths.filter((path) => path !== meta.relativePath),
+            error: null,
+          })
+      folderWatchesRef.current = next
+      return next
+    })
+  }, [])
+
+  const updateWatch = useCallback((courseId: string, patch: Partial<FolderWatch>) => {
+    setFolderWatches((prev) => {
+      const next = prev.map((item) => item.courseId === courseId ? { ...item, ...patch } : item)
+      folderWatchesRef.current = next
+      return next
+    })
+  }, [])
+
   // 启动加载：课程、会话、模型配置、老师名字、错题数。
   useEffect(() => {
     let alive = true
@@ -304,7 +390,8 @@ export function HanchuangApp() {
   useEffect(() => {
     if (!api) return
     const finishJob = (meta: JobMeta, state: string, message?: string): void => {
-      setPending((prev) => prev.filter((item) => !(item.courseId === meta.courseId && item.name === meta.name)))
+      setPending((prev) => prev.filter((item) => !(item.courseId === meta.courseId
+        && item.name === (meta.pendingKey ?? meta.name))))
       if (state !== 'succeeded' && state !== 'partial') {
         notify('bad', `《${meta.name}》解析失败：${message ?? state}`)
         return
@@ -313,23 +400,15 @@ export function HanchuangApp() {
         queueCreate(meta)
         return
       }
-      setAssets((prev) => {
-        const next = upsertAsset(prev, {
-          courseId: meta.courseId,
-          documentVersionId: meta.dvid,
-          name: meta.name,
-          addedAt: new Date().toISOString(),
-        })
-        saveAssets(next)
-        return next
-      })
+      commitAsset(meta)
+      markKnownInWatch(meta)
     }
     const off = api.jobs.onChanged((event: JobChangedEvent) => {
       const meta = jobMeta.current.get(event.jobId)
       if (!meta) return
       if (event.state === 'queued' || event.state === 'running') {
         setPending((prev) => prev.map((item) =>
-          item.courseId === meta.courseId && item.name === meta.name
+          item.courseId === meta.courseId && item.name === (meta.pendingKey ?? meta.name)
             ? { ...item, stage: event.total ? `解析中 ${event.completed}/${event.total}` : '解析中' }
             : item,
         ))
@@ -339,7 +418,26 @@ export function HanchuangApp() {
       finishJob(meta, event.state)
     })
     return () => { off() }
-  }, [api, notify, queueCreate])
+  }, [api, notify, queueCreate, commitAsset, markKnownInWatch])
+
+  // 文件夹轮询：寒窗开着时每 15 秒扫一次；窗口重新获得焦点也补扫。关着时下次启动补。
+  useEffect(() => {
+    if (!api) return
+    const tick = (): void => {
+      for (const watch of folderWatchesRef.current) {
+        if (watch.enabled) void syncFolderRef.current(watch.courseId, false)
+      }
+    }
+    const timer = window.setInterval(tick, 15_000)
+    const kick = window.setTimeout(tick, 1_000)
+    const onFocus = (): void => tick()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.clearTimeout(kick)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [api])
 
   function upload(courseId: string): void {
     if (!aiRef.current?.configured) {
@@ -418,10 +516,114 @@ export function HanchuangApp() {
     }
   }
 
-  /** 文件夹导入：先扫清单，确认后只解析入库；备课完全由用户点选触发。 */
+  /** 导入文件夹里的一个文件；成功/已排队返回 true，失败返回 false。 */
+  async function importFolderFile(courseId: string, file: FolderFile): Promise<boolean> {
+    if (!api) return false
+    const pendingKey = file.relativePath || file.name
+    setPending((prev) => [...prev, { courseId, name: pendingKey, stage: '正在导入' }])
+    const result = await api.documents.importPath({ path: file.path, requestId: crypto.randomUUID() })
+    if (!result.ok) {
+      setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === pendingKey)))
+      notify('bad', `《${pendingKey}》：${result.error.message}`)
+      return false
+    }
+    const meta: JobMeta = {
+      courseId,
+      dvid: result.data.documentVersionId,
+      name: file.name,
+      prep: false,
+      relativePath: file.relativePath,
+      sourcePath: file.path,
+      sizeBytes: file.sizeBytes,
+      modifiedMs: file.modifiedMs,
+      pendingKey,
+    }
+    if (result.data.duplicate) {
+      setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === pendingKey)))
+      commitAsset(meta)
+      markKnownInWatch(meta)
+      return true
+    }
+    jobMeta.current.set(result.data.jobId, meta)
+    const job = await api.jobs.get({ jobId: result.data.jobId })
+    if (job.ok && job.data.state !== 'queued' && job.data.state !== 'running' && jobMeta.current.delete(result.data.jobId)) {
+      setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === pendingKey)))
+      if (job.data.state === 'succeeded' || job.data.state === 'partial') {
+        commitAsset(meta)
+        markKnownInWatch(meta)
+        return true
+      }
+      notify('bad', `《${pendingKey}》解析失败：${job.data.error?.message ?? job.data.state}`)
+      return false
+    }
+    return true
+  }
+
+  /**
+   * 扫一次已绑定的文件夹：
+   * - 自动轮询只收新增文件，不碰内容改过的文件；
+   * - 手动同步才会把改过的文件重新导入成新版本，旧课堂仍保留。
+   */
+  async function syncCourseFolder(courseId: string, manual = false, confirmChanged = true): Promise<void> {
+    if (!api) return
+    const watch = folderWatchesRef.current.find((item) => item.courseId === courseId)
+    if (!watch || !watch.enabled) return
+    if (syncingFolders.current.has(courseId) || pendingRef.current.some((item) => item.courseId === courseId)) return
+    syncingFolders.current.add(courseId)
+    try {
+      const scan = await api.documents.scanFolder({ path: watch.folder })
+      if (!scan.ok) {
+        updateWatch(courseId, { error: scan.error.message, lastScanAt: new Date().toISOString() })
+        if (!folderErrorNotified.current.has(courseId)) {
+          folderErrorNotified.current.add(courseId)
+          notify('bad', `文件夹同步失败：${scan.error.message}`)
+        }
+        return
+      }
+      folderErrorNotified.current.delete(courseId)
+      const diff = diffFolderFiles(watch, scan.data.files)
+      updateWatch(courseId, {
+        lastScanAt: new Date().toISOString(),
+        error: null,
+        changedPaths: diff.changed.map((file) => file.relativePath),
+        missingPaths: diff.missing,
+      })
+      if (diff.changed.length > 0) {
+        if (!manual && !folderChangedNotified.current.has(courseId)) {
+          folderChangedNotified.current.add(courseId)
+          notify('info', `同步文件夹里有 ${diff.changed.length} 份课件内容改过了；为了不覆盖旧课堂，没有自动重导。点「立即同步」可以更新。`)
+        }
+      } else {
+        folderChangedNotified.current.delete(courseId)
+      }
+      const targets = manual ? [...diff.added, ...diff.changed] : diff.added
+      if (targets.length === 0) return
+      if (manual && diff.changed.length > 0 && confirmChanged) {
+        const ok = window.confirm(
+          `有 ${diff.changed.length} 份课件内容改过了，重新导入会生成新版本，旧课堂和旧素材不会被删。\n继续同步吗？`,
+        )
+        if (!ok) return
+      }
+      if (!manual) notify('info', `文件夹里新加了 ${targets.length} 份课件，正在自动导入素材库`)
+      let imported = 0
+      for (const file of targets) {
+        if (await importFolderFile(courseId, file)) imported += 1
+      }
+      updateWatch(courseId, { lastScanAt: new Date().toISOString() })
+      if (imported > 0) {
+        notify('good', manual
+          ? `已同步 ${imported} 份课件；解析完成后会出现在素材库，点「备课」再开讲`
+          : `已自动收下 ${imported} 份新课件；解析完成后会出现在素材库，不会自动花 token`)
+      }
+    } finally {
+      syncingFolders.current.delete(courseId)
+    }
+  }
+
+  /** 选择并绑定一个同步文件夹：记住路径，之后只自动收新增文件。 */
   async function importFolder(courseId: string): Promise<void> {
     if (!api) return
-    if (pending.some((item) => item.courseId === courseId)) {
+    if (pendingRef.current.some((item) => item.courseId === courseId)) {
       notify('info', '这个课程还有文件在导入／解析，等它跑完再选文件夹')
       return
     }
@@ -430,53 +632,62 @@ export function HanchuangApp() {
       notify('bad', scan.error.message)
       return
     }
-    if (scan.data.cancelled || scan.data.files.length === 0) {
-      if (!scan.data.cancelled) notify('info', `这个文件夹里没有能导入的课件${scan.data.skipped > 0 ? `（跳过 ${scan.data.skipped} 个不支持或隐藏的文件）` : ''}`)
-      return
+    if (scan.data.cancelled || !scan.data.folder) return
+    const existing = folderWatchesRef.current.find((item) => item.courseId === courseId)
+    const sameFolder = existing?.folder === scan.data.folder
+    const known: Record<string, FolderKnownFile> = sameFolder ? { ...existing.known } : {}
+    if (!sameFolder) {
+      const existingNames = new Set(assets.filter((item) => item.courseId === courseId).map((item) => item.name))
+      for (const file of scan.data.files) {
+        if (existingNames.has(file.name)) known[file.relativePath] = { sizeBytes: file.sizeBytes, modifiedMs: file.modifiedMs }
+      }
     }
-    const folderName = scan.data.folder ? scan.data.folder.split(/[\\/]/).pop() ?? '' : ''
+    const folderName = scan.data.folder.split(/[\\/]/).pop() ?? ''
+    const watch: FolderWatch = {
+      courseId,
+      folder: scan.data.folder,
+      folderName,
+      enabled: true,
+      known,
+      lastScanAt: existing?.lastScanAt ?? null,
+      error: null,
+      changedPaths: [],
+      missingPaths: [],
+    }
+    const diff = diffFolderFiles(watch, scan.data.files)
     const skippedNote = scan.data.skipped > 0 ? `\n另有 ${scan.data.skipped} 个不支持或隐藏的文件会跳过。` : ''
-    const ok = window.confirm(
-      `在「${folderName}」里找到 ${scan.data.files.length} 份课件，全部导入素材库？\n`
-      + '导入只做本地解析，不调用模型、不花 token；要讲哪份，再点它后面的「备课」。'
-      + skippedNote,
-    )
-    if (!ok) return
-    for (const file of scan.data.files) {
-      setPending((prev) => [...prev, { courseId, name: file.name, stage: '正在导入' }])
-      const result = await api.documents.importPath({ path: file.path, requestId: crypto.randomUUID() })
-      if (!result.ok) {
-        setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === file.name)))
-        notify('bad', `《${file.name}》：${result.error.message}`)
-        continue
-      }
-      const meta: JobMeta = { courseId, dvid: result.data.documentVersionId, name: file.name, prep: false }
-      if (result.data.duplicate) {
-        setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === file.name)))
-        setAssets((prev) => {
-          const next = upsertAsset(prev, { courseId, documentVersionId: meta.dvid, name: meta.name, addedAt: new Date().toISOString() })
-          saveAssets(next)
-          return next
-        })
-        continue
-      }
-      jobMeta.current.set(result.data.jobId, meta)
-      const job = await api.jobs.get({ jobId: result.data.jobId })
-      if (job.ok && job.data.state !== 'queued' && job.data.state !== 'running' && jobMeta.current.delete(result.data.jobId)) {
-        setPending((prev) => prev.filter((item) => !(item.courseId === courseId && item.name === file.name)))
-        if (job.data.state === 'succeeded' || job.data.state === 'partial') {
-          setAssets((prev) => {
-            const next = upsertAsset(prev, { courseId, documentVersionId: meta.dvid, name: meta.name, addedAt: new Date().toISOString() })
-            saveAssets(next)
-            return next
-          })
-        } else {
-          notify('bad', `《${file.name}》解析失败：${job.data.error?.message ?? job.data.state}`)
-        }
-      }
+    const summary = scan.data.files.length === 0
+      ? `「${folderName}」里现在还没有能导入的课件。要把它设为自动同步文件夹吗？以后放进去的课件会自动进来。`
+      : sameFolder
+        ? `「${folderName}」已经在这个课程里同步：${diff.added.length} 份新增，${diff.changed.length} 份内容有更新。\n继续同步吗？`
+        : `选中「${folderName}」，找到 ${scan.data.files.length} 份课件。\n以后直接往这个文件夹里放新课件，寒窗会自动导入，不用重新选。\n只导入素材、不自动备课，不花 token。${skippedNote}`
+    if (!window.confirm(summary)) return
+    const next = upsertFolderWatch(folderWatchesRef.current, watch)
+    folderWatchesRef.current = next
+    setFolderWatches(next)
+    // 老版本导入的素材只有文件名；绑定文件夹时补上相对路径，左栏马上升级成目录树。
+    setAssets((prev) => {
+      let changed = false
+      const migrated = prev.map((asset) => {
+        if (asset.courseId !== courseId || asset.relativePath) return asset
+        const file = scan.data.files.find((item) => item.name === asset.name)
+        if (!file) return asset
+        changed = true
+        return { ...asset, sourcePath: file.path, relativePath: file.relativePath }
+      })
+      if (!changed) return prev
+      saveAssets(migrated)
+      return migrated
+    })
+    if (scan.data.files.length > 0 && diff.added.length + diff.changed.length > 0) {
+      // 上面已经把「N 份新增 / N 份更新」说清楚了，这里不再弹第二次确认。
+      await syncCourseFolder(courseId, true, false)
+    } else {
+      notify('good', `已设为自动同步：以后往「${folderName}」里放课件就会自动进来`)
     }
-    notify('good', '文件夹已导入素材库，点「备课」再开讲')
   }
+
+  syncFolderRef.current = syncCourseFolder
 
   function prepAsset(courseId: string, documentVersionId: string, name: string): void {
     if (!aiRef.current?.configured) {
@@ -567,6 +778,16 @@ export function HanchuangApp() {
       return
     }
     applyCourses(result.data)
+    setFolderWatches((prev) => {
+      const next = dropFolderWatch(prev, courseId)
+      folderWatchesRef.current = next
+      return next
+    })
+    setAssets((prev) => {
+      const next = prev.filter((item) => item.courseId !== courseId)
+      saveAssets(next)
+      return next
+    })
     if (detailRef.current?.courseId === courseId) applyDetail(null)
     await refreshCourses()
     notify('info', '课程已删除')
@@ -785,6 +1006,7 @@ export function HanchuangApp() {
         expanded={expanded}
         pending={pending}
         assets={assets}
+        folderWatches={folderWatches}
         assetCosts={assetCosts}
         missCount={missCount}
         reviewActive={view === 'review'}
@@ -797,6 +1019,21 @@ export function HanchuangApp() {
         onOpenSession={(sessionId) => void openSession(sessionId)}
         onUpload={(courseId) => upload(courseId)}
         onImportFolder={(courseId) => void importFolder(courseId)}
+        onSyncFolder={(courseId) => {
+          const watch = folderWatchesRef.current.find((item) => item.courseId === courseId)
+          if (!watch) return
+          if (!watch.enabled) {
+            const next = upsertFolderWatch(folderWatchesRef.current, { ...watch, enabled: true, error: null })
+            folderWatchesRef.current = next
+            setFolderWatches(next)
+          }
+          void syncCourseFolder(courseId, true)
+        }}
+        onStopFolder={(courseId) => {
+          const watch = folderWatchesRef.current.find((item) => item.courseId === courseId)
+          updateWatch(courseId, { enabled: false })
+          notify('info', watch ? `已停止自动同步「${watch.folderName}」；素材和课堂都保留` : '已停止自动同步')
+        }}
         onPrepAsset={(courseId, documentVersionId, name) => prepAsset(courseId, documentVersionId, name)}
         onRemoveAsset={(courseId, documentVersionId) => removeAsset(courseId, documentVersionId)}
         onDropFiles={(courseId, files) => void importFiles(courseId, files)}

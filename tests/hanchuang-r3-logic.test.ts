@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { assetListOf, pageForQuote, prepPhaseLabel, readAssets, upsertAsset } from '../src/renderer/hanchuang/logic'
+import {
+  assetListOf, assetTreeOf, diffFolderFiles, pageForQuote, prepPhaseLabel, readAssets, readFolderWatches,
+  rememberFiles, upsertAsset, type FolderWatch,
+} from '../src/renderer/hanchuang/logic'
 import type { SearchHit } from '../src/shared/search'
 
 describe('备课进度文案', () => {
@@ -37,6 +40,85 @@ describe('素材索引', () => {
     )
     expect(items).toHaveLength(1)
     expect(items[0].name).toBe('新名')
+  })
+
+  test('新素材保留源文件夹与相对路径，旧数据仍能读', () => {
+    const items = readAssets(JSON.stringify([
+      { courseId: 'c1', documentVersionId: 'v1', name: 'chapter1.pdf', addedAt: '2026-11-18T00:00:00Z', relativePath: 'chapter1.pdf' },
+      { courseId: 'c1', documentVersionId: 'v2', name: 'A.c', addedAt: '2026-11-18T00:00:00Z', relativePath: 'HW/HW04/A.c', sourcePath: 'C:\\data\\HW\\HW04\\A.c' },
+    ]))
+    expect(items[0].relativePath).toBe('chapter1.pdf')
+    expect(items[1].relativePath).toBe('HW/HW04/A.c')
+    expect(items[1].sourcePath).toBe('C:\\data\\HW\\HW04\\A.c')
+  })
+})
+
+describe('同步文件夹索引', () => {
+  const watch: FolderWatch = {
+    courseId: 'c1',
+    folder: 'C:\\Users\\16122\\Desktop\\数据结构',
+    folderName: '数据结构',
+    enabled: true,
+    known: {
+      'chapter1.pdf': { sizeBytes: 10, modifiedMs: 100 },
+      'gone.pdf': { sizeBytes: 20, modifiedMs: 200 },
+    },
+    lastScanAt: null,
+    error: null,
+    changedPaths: [],
+    missingPaths: [],
+  }
+
+  test('坏数据回落，合法条目保留监听状态和已知文件', () => {
+    expect(readFolderWatches('not json')).toEqual([])
+    expect(readFolderWatches('[{"courseId":1}]')).toEqual([])
+    const items = readFolderWatches(JSON.stringify([
+      { ...watch, enabled: false, known: { 'chapter1.pdf': { sizeBytes: 10, modifiedMs: 100 } } },
+      { ...watch },
+    ]))
+    expect(items).toHaveLength(1)
+    expect(items[0].enabled).toBe(false)
+    expect(items[0].known['chapter1.pdf']).toEqual({ sizeBytes: 10, modifiedMs: 100 })
+  })
+
+  test('diff 只把没见过的算新增，改过的算变更，消失的算缺失', () => {
+    const files = [
+      { path: 'C:\\Users\\16122\\Desktop\\数据结构\\chapter1.pdf', name: 'chapter1.pdf', relativePath: 'chapter1.pdf', sizeBytes: 10, modifiedMs: 100 },
+      { path: 'C:\\Users\\16122\\Desktop\\数据结构\\chapter1.pdf', name: 'chapter1.pdf', relativePath: 'chapter1.pdf', sizeBytes: 10, modifiedMs: 100 },
+      { path: 'C:\\Users\\16122\\Desktop\\数据结构\\chapter2.pdf', name: 'chapter2.pdf', relativePath: 'chapter2.pdf', sizeBytes: 30, modifiedMs: 300 },
+    ]
+    const diff = diffFolderFiles(watch, files)
+    expect(diff.added.map((file) => file.relativePath)).toEqual(['chapter2.pdf'])
+    expect(diff.changed).toEqual([])
+    expect(diff.missing).toEqual(['gone.pdf'])
+
+    const changed = diffFolderFiles(watch, [
+      { path: 'C:\\Users\\16122\\Desktop\\数据结构\\chapter1.pdf', name: 'chapter1.pdf', relativePath: 'chapter1.pdf', sizeBytes: 11, modifiedMs: 101 },
+    ])
+    expect(changed.changed.map((file) => file.relativePath)).toEqual(['chapter1.pdf'])
+  })
+
+  test('rememberFiles 只更新传入的文件，其它签名保留', () => {
+    const known = rememberFiles(watch.known, [
+      { path: '', name: 'chapter2.pdf', relativePath: 'chapter2.pdf', sizeBytes: 30, modifiedMs: 300 },
+    ])
+    expect(known['chapter2.pdf']).toEqual({ sizeBytes: 30, modifiedMs: 300 })
+    expect(known['chapter1.pdf']).toEqual({ sizeBytes: 10, modifiedMs: 100 })
+  })
+
+  test('素材树按相对路径还原多层目录，根文件留在最前', () => {
+    const tree = assetTreeOf([
+      { courseId: 'c1', documentVersionId: 'v1', name: 'ai讲解1.pdf', addedAt: '2026-11-18T00:00:00Z' },
+      { courseId: 'c1', documentVersionId: 'v2', name: 'chapter1.pdf', addedAt: '2026-11-18T00:00:00Z', relativePath: 'chapter1.pdf' },
+      { courseId: 'c1', documentVersionId: 'v3', name: 'README.md', addedAt: '2026-11-18T00:00:00Z', relativePath: 'HW04_HW05_代码逐行讲解/README.md' },
+      { courseId: 'c1', documentVersionId: 'v4', name: 'A.c', addedAt: '2026-11-18T00:00:00Z', relativePath: 'HW04_HW05_代码逐行讲解/HW04/A.c' },
+    ])
+    expect(tree.assets.map((asset) => asset.name)).toEqual(['ai讲解1.pdf', 'chapter1.pdf'])
+    expect(tree.folders).toHaveLength(1)
+    expect(tree.folders[0].name).toBe('HW04_HW05_代码逐行讲解')
+    expect(tree.folders[0].assets.map((asset) => asset.name)).toEqual(['README.md'])
+    expect(tree.folders[0].folders[0].name).toBe('HW04')
+    expect(tree.folders[0].folders[0].assets.map((asset) => asset.name)).toEqual(['A.c'])
   })
 })
 
