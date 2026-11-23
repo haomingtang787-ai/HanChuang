@@ -403,6 +403,19 @@ export function diffFolderFiles(watch: FolderWatch, files: FolderFile[]): Folder
 /** 素材按相对路径还原成目录树；没有 relativePath 的老素材留在根上。 */
 export type AssetTreeNode = { name: string; path: string; assets: AssetItem[]; folders: AssetTreeNode[] }
 
+/** 同一层里文件夹必须排在文件前面，免得用户为了展开子文件夹一直翻到列表底部。 */
+export type AssetTreeEntry =
+  | { kind: 'folder'; node: AssetTreeNode }
+  | { kind: 'asset'; asset: AssetItem }
+
+export function assetTreeEntries(node: AssetTreeNode): AssetTreeEntry[] {
+  return [
+    ...node.folders.map((folder) => ({ kind: 'folder' as const, node: folder })),
+    ...node.assets.map((asset) => ({ kind: 'asset' as const, asset })),
+  ]
+}
+
+
 function emptyNode(name: string, path: string): AssetTreeNode {
   return { name, path, assets: [], folders: [] }
 }
@@ -417,7 +430,7 @@ function folderChild(node: AssetTreeNode, name: string): AssetTreeNode {
   return child
 }
 
-/** 只按路径建树，不依赖导入顺序；根目录文件排在最前。 */
+/** 只按路径建树，不依赖导入顺序；同层文件夹排在文件前。 */
 export function assetTreeOf(items: AssetItem[]): AssetTreeNode {
   const root = emptyNode('', '')
   for (const item of items) {

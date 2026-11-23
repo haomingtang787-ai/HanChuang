@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  assetListOf, assetTreeOf, diffFolderFiles, pageForQuote, prepPhaseLabel, readAssets, readFolderWatches,
+  assetListOf, assetTreeEntries, assetTreeOf, diffFolderFiles, pageForQuote, prepPhaseLabel, readAssets, readFolderWatches,
   rememberFiles, upsertAsset, type FolderWatch,
 } from '../src/renderer/hanchuang/logic'
 import type { SearchHit } from '../src/shared/search'
@@ -129,16 +129,18 @@ describe('同步文件夹索引', () => {
     expect(known['chapter1.pdf']).toEqual({ sizeBytes: 10, modifiedMs: 100 })
   })
 
-  test('素材树按相对路径还原多层目录，根文件留在最前', () => {
+  test('素材树按相对路径还原多层目录，同层文件夹排在文件前', () => {
     const tree = assetTreeOf([
       { courseId: 'c1', documentVersionId: 'v1', name: 'ai讲解1.pdf', addedAt: '2026-11-18T00:00:00Z' },
       { courseId: 'c1', documentVersionId: 'v2', name: 'chapter1.pdf', addedAt: '2026-11-18T00:00:00Z', relativePath: 'chapter1.pdf' },
       { courseId: 'c1', documentVersionId: 'v3', name: 'README.md', addedAt: '2026-11-18T00:00:00Z', relativePath: 'HW04_HW05_代码逐行讲解/README.md' },
       { courseId: 'c1', documentVersionId: 'v4', name: 'A.c', addedAt: '2026-11-18T00:00:00Z', relativePath: 'HW04_HW05_代码逐行讲解/HW04/A.c' },
     ])
+    expect(assetTreeEntries(tree).map((entry) => entry.kind)).toEqual(['folder', 'asset', 'asset'])
     expect(tree.assets.map((asset) => asset.name)).toEqual(['ai讲解1.pdf', 'chapter1.pdf'])
     expect(tree.folders).toHaveLength(1)
     expect(tree.folders[0].name).toBe('HW04_HW05_代码逐行讲解')
+    expect(assetTreeEntries(tree.folders[0]).map((entry) => entry.kind)).toEqual(['folder', 'asset'])
     expect(tree.folders[0].assets.map((asset) => asset.name)).toEqual(['README.md'])
     expect(tree.folders[0].folders[0].name).toBe('HW04')
     expect(tree.folders[0].folders[0].assets.map((asset) => asset.name)).toEqual(['A.c'])

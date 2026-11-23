@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type { StudyCourseTree } from '../../shared/study'
 import { LIMITS } from '../../shared/constants'
-import { assetTreeOf, type AssetItem, type AssetTreeNode, type FolderWatch } from './logic'
+import { assetTreeEntries, assetTreeOf, type AssetItem, type AssetTreeNode, type FolderWatch } from './logic'
 import { BrandMark } from './BrandMark'
 
 export type PendingUpload = { courseId: string; name: string; stage: string; dvid?: string }
@@ -111,12 +111,17 @@ export function Sidebar(props: Props) {
     )
   }
 
+  function renderEntries(node: AssetTreeNode, courseId: string, parentDepth: number): ReactElement[] {
+    return assetTreeEntries(node).map((entry) => entry.kind === 'folder'
+      ? renderFolder(entry.node, courseId, parentDepth + 1)
+      : renderAsset(entry.asset))
+  }
+
   function renderFolder(node: AssetTreeNode, courseId: string, depth: number): ReactElement {
     if (depth === 0) {
       return (
         <div className="hc-asset-tree">
-          {node.assets.map(renderAsset)}
-          {node.folders.map((child) => renderFolder(child, courseId, depth + 1))}
+          {renderEntries(node, courseId, 0)}
         </div>
       )
     }
@@ -131,8 +136,7 @@ export function Sidebar(props: Props) {
         </button>
         {open && (
           <div className="hc-asset-folder-body" style={{ paddingLeft: 10 }}>
-            {node.assets.map(renderAsset)}
-            {node.folders.map((child) => renderFolder(child, courseId, depth + 1))}
+            {renderEntries(node, courseId, depth)}
           </div>
         )}
       </div>
