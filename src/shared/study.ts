@@ -192,7 +192,7 @@ export type StudyUsage = {
   reasoningTokens: number
   /** 供应商真实返回 usage 的调用数。 */
   reportedCalls: number
-  /** 供应商没有返回 usage、只能记为 0 的调用数；这些数字不能当真实消耗。 */
+  /** 供应商没有返回 usage、按提示词估算记账的调用数；这些数字是估算，不是账单。 */
   estimatedCalls: number
   /** 按每次调用的模型与发生时段（闲时/高峰）估出的官方价，单位元。 */
   costYuan?: number

@@ -51,7 +51,7 @@ const RESEARCH_SYSTEM = [
   '引用搜索结果时写成 [1]、[2]，编号对应给出的来源；没有来源支持的句子不要写。',
 ].join('\n')
 
-type VisionPayload = { mime: string; base64: string }
+type VisionPayload = { mime: string; base64: string; width?: number; height?: number }
 
 export type ImageServiceOptions = {
   store: Store
@@ -493,5 +493,5 @@ async function defaultVisionPayload(file: string): Promise<VisionPayload> {
   }
   context.drawImage(image, 0, 0, width, height)
   const jpeg = canvas.toBuffer('image/jpeg', 88)
-  return { mime: 'image/jpeg', base64: jpeg.toString('base64') }
+  return { mime: 'image/jpeg', base64: jpeg.toString('base64'), width, height }
 }

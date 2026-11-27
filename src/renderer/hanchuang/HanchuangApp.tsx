@@ -682,12 +682,17 @@ export function HanchuangApp() {
             {usageOpen && (
               <div className="hc-usage-pop">
                 <div className="hc-usage-head">
-                  <span>本课真实用量</span>
+                  <span>本课用量</span>
                   <button onClick={() => setUsageOpen(false)}>✕</button>
                 </div>
                 {usageAudit ? (
                   <div className="hc-usage-body">
                     <div>调用 {usageAudit.usage.calls} 次 · 输入 {usageAudit.usage.promptTokens.toLocaleString()}（缓存命中 {usageAudit.usage.cachedTokens.toLocaleString()}）· 输出 {usageAudit.usage.completionTokens.toLocaleString()}</div>
+                    {usageAudit.usage.estimatedCalls > 0 && (
+                      <div className="hc-muted">
+                        其中 {usageAudit.usage.estimatedCalls} 次为估算（供应商未返回用量或请求超时），这几笔按提示词估算，不一定等于账单。
+                      </div>
+                    )}
                     {usageAudit.kinds.map((kind) => (
                       <div key={kind.kind} className="hc-usage-kind">
                         {kind.kind}：{kind.calls} 次 · {(kind.promptTokens + kind.completionTokens).toLocaleString()} tokens

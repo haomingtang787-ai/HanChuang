@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AiClient, AiError, type AiUsage } from '../src/ai/client'
+import { AiClient, AiError, estimateImageTokens, type AiUsage } from '../src/ai/client'
 
 const config = { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash', apiKey: 'k' }
 const noWait = async () => {}
@@ -87,5 +87,35 @@ describe('模型重试与月度预算', () => {
     expect(noted.map((item) => item.promptTokens)).toEqual([20, 20])
     expect(noted[0]?.providerReported).toBe(true)
     expect(noted[1]?.completionTokens).toBe(5)
+  })
+
+  it('读图超时把图片本身的 token 也算进去', async () => {
+    const noted: AiUsage[] = []
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(timeoutError())
+      .mockResolvedValueOnce(jsonResponse('图', { prompt_tokens: 3000, completion_tokens: 40 })) as unknown as typeof fetch
+    await client({ fetchImpl, onUsage: (_kind, usage) => noted.push(usage) }).describeImage({
+      mime: 'image/jpeg',
+      base64: 'AAAA',
+      prompt: '读这一页',
+      width: 2048,
+      height: 1152,
+    })
+    expect(noted[0]?.providerReported).toBe(false)
+    expect(noted[0]?.promptTokens).toBeGreaterThanOrEqual(estimateImageTokens(2048, 1152))
+    expect(noted[1]?.providerReported).toBe(true)
+  })
+
+  it('读图没有尺寸时用保守保底值，也不漏账', async () => {
+    const noted: AiUsage[] = []
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(timeoutError())
+      .mockResolvedValueOnce(jsonResponse('图', { prompt_tokens: 1200, completion_tokens: 10 })) as unknown as typeof fetch
+    await client({ fetchImpl, onUsage: (_kind, usage) => noted.push(usage) }).describeImage({
+      mime: 'image/jpeg',
+      base64: 'AAAA',
+      prompt: '读图',
+    })
+    expect(noted[0]?.promptTokens).toBeGreaterThanOrEqual(1500)
   })
 })

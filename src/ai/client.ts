@@ -55,6 +55,17 @@ export function estimatePromptTokens(text: string): number {
   return Math.max(1, Math.ceil(tokens))
 }
 
+/**
+ * 读图请求超时同样拿不到 usage，图片本身的 token 不能漏。
+ * 按 512px 分块粗估（与主流视觉模型的高清计费口径接近）；没有尺寸时给保守的保底值。
+ * 只用于预算兜底，不和账单逐 token 对齐。
+ */
+export function estimateImageTokens(width?: number, height?: number): number {
+  if (!width || !height || width <= 0 || height <= 0) return 1_500
+  const tiles = Math.max(1, Math.ceil(width / 512) * Math.ceil(height / 512))
+  return 85 + 170 * tiles
+}
+
 export class AiError extends Error {
   constructor(
     readonly code: 'AI_FAILED' | 'AI_NOT_CONFIGURED' | 'LIMIT_EXCEEDED',
@@ -274,12 +285,14 @@ export class AiClient {
   }
 
   /** 让支持图片输入的 OpenAI 兼容模型读一张图；用于扫描件、图表和课件截图。 */
-  async describeImage(input: { mime: string; base64: string; prompt: string; model?: string; system?: string; kind?: string }): Promise<string> {
+  async describeImage(input: { mime: string; base64: string; prompt: string; model?: string; system?: string; kind?: string; width?: number; height?: number }): Promise<string> {
     const kind = input.kind ?? 'vision'
     const model = input.model ?? this.config.model
     const response = await this.postChat({
       kind,
       promptText: `${input.system ?? ''}\n${input.prompt}`,
+      // 图片本身也占输入 token；超时记账时必须一起算上。
+      extraPromptTokens: estimateImageTokens(input.width, input.height),
       timeoutMs: Math.max(this.timeoutMs, 90_000),
       model,
       body: {
@@ -327,7 +340,7 @@ export class AiClient {
    * 每次尝试前过预算。超时按提示词记一笔未回报用量再决定要不要重试；
    * 可重试的响应若自带 usage，也记下来，避免失败的那次从月度闸门里漏掉。
    */
-  private async postChat(input: { kind: string; promptText: string; timeoutMs: number; body: unknown; model?: string }): Promise<Response> {
+  private async postChat(input: { kind: string; promptText: string; timeoutMs: number; body: unknown; model?: string; extraPromptTokens?: number }): Promise<Response> {
     let response: Response | null = null
     for (let attempt = 0; attempt < 3; attempt += 1) {
       this.beforeCall?.()
@@ -339,7 +352,7 @@ export class AiClient {
           signal: AbortSignal.timeout(input.timeoutMs),
         })
       } catch (error) {
-        if (isTimeout(error)) this.noteTimeout(input.kind, input.promptText, input.model)
+        if (isTimeout(error)) this.noteTimeout(input.kind, input.promptText, input.model, input.extraPromptTokens ?? 0)
         if (attempt < 2) {
           await this.pause(attempt)
           continue
@@ -354,8 +367,8 @@ export class AiClient {
     throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
   }
 
-  private noteTimeout(kind: string, promptText: string, model = this.config.model): void {
-    const promptTokens = estimatePromptTokens(promptText)
+  private noteTimeout(kind: string, promptText: string, model = this.config.model, extraPromptTokens = 0): void {
+    const promptTokens = estimatePromptTokens(promptText) + Math.max(0, Math.round(extraPromptTokens))
     this.onUsage?.(kind, {
       promptTokens,
       cachedTokens: 0,
