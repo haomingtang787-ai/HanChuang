@@ -35,6 +35,26 @@ function retryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500
 }
 
+/** AbortSignal.timeout 抛 TimeoutError；部分运行时记成 AbortError。连不上服务器的 TypeError 不算超时。 */
+function isTimeout(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const name = (error as { name?: unknown }).name
+  return name === 'TimeoutError' || name === 'AbortError'
+}
+
+/**
+ * 超时拿不到服务端 usage。按已发出的提示词估算，让月度闸门至少盖住这部分花费。
+ * 汉字按 1 token，ASCII 按 4 字 1 token，取整向上，避免闸门比真实花费松。
+ */
+export function estimatePromptTokens(text: string): number {
+  let tokens = 0
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    tokens += code > 0xff ? 1 : 0.25
+  }
+  return Math.max(1, Math.ceil(tokens))
+}
+
 export class AiError extends Error {
   constructor(
     readonly code: 'AI_FAILED' | 'AI_NOT_CONFIGURED' | 'LIMIT_EXCEEDED',
@@ -53,6 +73,8 @@ export class AiClient {
     private readonly onUsage?: AiUsageSink,
     /** 每次真正发模型请求前调用；预算到顶时抛 AiError('LIMIT_EXCEEDED')。 */
     private readonly beforeCall?: () => void,
+    /** 重试等待。正式调用走退避；测试可以换成立即继续。 */
+    private readonly pause: (attempt: number) => Promise<void> = retryDelay,
   ) {}
 
   private endpoint(): string {
@@ -222,47 +244,27 @@ export class AiClient {
     thinking: 'enabled' | 'disabled' = 'enabled',
     kind = 'chat',
   ): Promise<string> {
-    this.beforeCall?.()
-    let response: Response | null = null
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        response = await this.fetchImpl(this.endpoint(), {
-          method: 'POST',
-          headers: this.authHeaders(true),
-          body: JSON.stringify({
-            model: this.config.model,
-            messages: [
-              { role: 'system', content: system },
-              { role: 'user', content: user },
-            ],
-            temperature: 0.4,
-            max_tokens: maxTokens,
-            ...(thinking === 'disabled' ? { thinking: { type: 'disabled' } } : {}),
-          }),
-          signal: AbortSignal.timeout(this.timeoutMs),
-        })
-      } catch (error) {
-        if (attempt < 2) {
-          await retryDelay(attempt)
-          continue
-        }
-        throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
-      }
-      if (response.ok || !retryableStatus(response.status) || attempt === 2) break
-      await retryDelay(attempt)
-    }
-    if (!response) throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
+    const response = await this.postChat({
+      kind,
+      promptText: `${system}\n${user}`,
+      timeoutMs: this.timeoutMs,
+      body: {
+        model: this.config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.4,
+        max_tokens: maxTokens,
+        ...(thinking === 'disabled' ? { thinking: { type: 'disabled' } } : {}),
+      },
+    })
     const text = await response.text()
     if (!response.ok) {
+      await this.noteBodyUsage(text, kind)
       throw new AiError('AI_FAILED', `模型服务返回 ${response.status}：${text.slice(0, 160)}`)
     }
-
-    let body: unknown
-    try {
-      body = JSON.parse(text)
-    } catch {
-      throw new AiError('AI_FAILED', '模型服务返回的不是 JSON。')
-    }
+    const body = parseJson(text)
     const content = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
     if (typeof content !== 'string' || !content.trim()) {
       throw new AiError('AI_FAILED', '模型没有返回内容。')
@@ -273,54 +275,38 @@ export class AiClient {
 
   /** 让支持图片输入的 OpenAI 兼容模型读一张图；用于扫描件、图表和课件截图。 */
   async describeImage(input: { mime: string; base64: string; prompt: string; model?: string; system?: string; kind?: string }): Promise<string> {
-    this.beforeCall?.()
-    let response: Response | null = null
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        response = await this.fetchImpl(this.endpoint(), {
-          method: 'POST',
-          headers: this.authHeaders(true),
-          body: JSON.stringify({
-            model: input.model ?? this.config.model,
-            messages: [
-              ...(input.system ? [{ role: 'system', content: input.system }] : []),
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: input.prompt },
-                  { type: 'image_url', image_url: { url: `data:${input.mime};base64,${input.base64}` } },
-                ],
-              },
+    const kind = input.kind ?? 'vision'
+    const model = input.model ?? this.config.model
+    const response = await this.postChat({
+      kind,
+      promptText: `${input.system ?? ''}\n${input.prompt}`,
+      timeoutMs: Math.max(this.timeoutMs, 90_000),
+      model,
+      body: {
+        model,
+        messages: [
+          ...(input.system ? [{ role: 'system', content: input.system }] : []),
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: input.prompt },
+              { type: 'image_url', image_url: { url: `data:${input.mime};base64,${input.base64}` } },
             ],
-            temperature: 0.2,
-            max_tokens: 3200,
-          }),
-          signal: AbortSignal.timeout(Math.max(this.timeoutMs, 90_000)),
-        })
-      } catch {
-        if (attempt < 2) {
-          await retryDelay(attempt)
-          continue
-        }
-        throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
-      }
-      if (response.ok || !retryableStatus(response.status) || attempt === 2) break
-      await retryDelay(attempt)
-    }
-    if (!response) throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 3200,
+      },
+    })
     const text = await response.text()
     if (!response.ok) {
+      await this.noteBodyUsage(text, kind)
       throw new AiError('AI_FAILED', `模型服务返回 ${response.status}：${text.slice(0, 160)}`)
     }
-    let body: unknown
-    try {
-      body = JSON.parse(text)
-    } catch {
-      throw new AiError('AI_FAILED', '模型服务返回的不是 JSON。')
-    }
+    const body = parseJson(text)
     const content = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
     if (typeof content === 'string' && content.trim()) {
-      this.onUsage?.(input.kind ?? 'vision', parseAiUsage(body))
+      this.onUsage?.(kind, parseAiUsage(body))
       return content
     }
     if (Array.isArray(content)) {
@@ -330,11 +316,64 @@ export class AiClient {
         .join('\n')
         .trim()
       if (joined) {
-        this.onUsage?.(input.kind ?? 'vision', parseAiUsage(body))
+        this.onUsage?.(kind, parseAiUsage(body))
         return joined
       }
     }
     throw new AiError('AI_FAILED', '模型没有返回图像说明。检查模型是否支持图片；DeepSeek 请用 deepseek-flash。')
+  }
+
+  /**
+   * 每次尝试前过预算。超时按提示词记一笔未回报用量再决定要不要重试；
+   * 可重试的响应若自带 usage，也记下来，避免失败的那次从月度闸门里漏掉。
+   */
+  private async postChat(input: { kind: string; promptText: string; timeoutMs: number; body: unknown; model?: string }): Promise<Response> {
+    let response: Response | null = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      this.beforeCall?.()
+      try {
+        response = await this.fetchImpl(this.endpoint(), {
+          method: 'POST',
+          headers: this.authHeaders(true),
+          body: JSON.stringify(input.body),
+          signal: AbortSignal.timeout(input.timeoutMs),
+        })
+      } catch (error) {
+        if (isTimeout(error)) this.noteTimeout(input.kind, input.promptText, input.model)
+        if (attempt < 2) {
+          await this.pause(attempt)
+          continue
+        }
+        throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
+      }
+      if (response.ok || !retryableStatus(response.status) || attempt === 2) return response
+      const errorText = await response.text()
+      this.noteBodyUsage(errorText, input.kind)
+      await this.pause(attempt)
+    }
+    throw new AiError('AI_FAILED', '连不上模型服务，检查地址、网络和密钥。')
+  }
+
+  private noteTimeout(kind: string, promptText: string, model = this.config.model): void {
+    const promptTokens = estimatePromptTokens(promptText)
+    this.onUsage?.(kind, {
+      promptTokens,
+      cachedTokens: 0,
+      cacheMissTokens: promptTokens,
+      completionTokens: 0,
+      reasoningTokens: 0,
+      providerReported: false,
+      model,
+    })
+  }
+
+  private noteBodyUsage(text: string, kind: string): void {
+    try {
+      const usage = parseAiUsage(JSON.parse(text) as unknown)
+      if (usage.providerReported) this.onUsage?.(kind, usage)
+    } catch {
+      // 错误页不是 JSON 时没有可记的用量。
+    }
   }
 }
 
@@ -371,6 +410,14 @@ export function parseAiUsage(body: unknown): AiUsage {
     reasoningTokens: toCount(completionDetails.reasoning_tokens),
     providerReported: true,
     model,
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new AiError('AI_FAILED', '模型服务返回的不是 JSON。')
   }
 }
 
